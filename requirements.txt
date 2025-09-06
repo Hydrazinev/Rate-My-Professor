@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+python-dotenv
+openai
+pinecone-client
+redis
+httpx
+pydantic
+anyio
