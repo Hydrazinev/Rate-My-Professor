@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <!--
+      Professor Chat UI — Accessible, resilient, framework-free.
+      Behavior preserved: WebSocket boot, streaming (<STREAM>/<END>), quick actions, dialogs, RMP card parsing.
+    -->
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Professor Chatbot</title>
+
+    <style>
+      :root {
+        /* Design tokens */
+        --bg1: #0b0c10;
+        --bg2: #1f2833;
+        --panel: #1b1e23;
+        --panel-2: #20242b;
+        --header: #21252b;
+        --ink: #c5c6c7;
+        --ink-dim: #a9aaac;
+        --chip: #39424e;
+        --accent: #66fcf1;
+        --good: #16c784;
+        --border: #2a2e35;
+        --border-2: #333842;
+        --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+        --radius: 16px;
+        --radius-sm: 12px;
+      }
+
+      .sr-only {
+        position: absolute;
+        width: 1px; height: 1px;
+        padding: 0; margin: -1px;
+        overflow: hidden; clip: rect(0 0 0 0);
+        white-space: nowrap; border: 0;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        * { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+      }
+
+      html, body { height: 100%; }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+        color: var(--ink);
+        background: linear-gradient(135deg, var(--bg1), var(--bg2));
+        display: grid; place-items: center;
+      }
+
+      .chat {
+        width: min(100%, 520px);
+        height: min(92vh, 760px);
+        background: var(--panel);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        display: grid;
+        grid-template-rows: auto auto 1fr auto;
+        overflow: hidden; /* allow inner scrollers to work */
+      }
+
+      header.chat__header {
+        background: var(--header);
+        border-bottom: 1px solid var(--border);
+        padding: 12px 16px;
+        display: flex; align-items: center; justify-content: space-between;
+      }
+      .chat__title { margin: 0; font-size: 1rem; font-weight: 700; }
+
+      .status { inline-size: 12px; block-size: 12px; border-radius: 50%; }
+      .status--connecting { background: #fffb4d; }
+      .status--connected  { background: #06ff06; }
+      .status--disconnected { background: #ff3434; }
+
+      nav.chat__quick {
+        display: flex; gap: 8px; flex-wrap: wrap;
+        background: var(--panel-2);
+        border-bottom: 1px solid var(--border);
+        padding: 10px 12px;
+      }
+      .qa-btn {
+        display: inline-flex; align-items: center; gap: 8px;
+        padding: 10px 12px; border-radius: var(--radius-sm);
+        color: #e9eff2; background: #262b33; border: 1px solid #323845;
+        cursor: pointer; font: inherit;
+      }
+      .qa-btn:hover { border-color: #3d4553; }
+      .qa-dot { inline-size: 6px; block-size: 6px; border-radius: 50%; background: var(--accent); }
+
+      /* ===== Scroll fix: allow middle row to shrink and the UL to scroll ===== */
+      main {
+        min-height: 0;               /* critical in CSS grid for inner scrollers */
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;            /* keep scrolling inside .chat__log */
+      }
+      main > section {
+        min-height: 0;               /* ensures section doesn't force growth */
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      .chat__log {
+        list-style: none; margin: 0; padding: 14px;
+        display: flex; flex-direction: column; gap: 10px;
+
+        /* the magic trio */
+        min-height: 0;
+        flex: 1 1 auto;
+        height: 100%;
+
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;         /* momentum on iOS */
+        scrollbar-gutter: stable both-edges;       /* keeps layout stable */
+        scrollbar-width: thin; scrollbar-color: #777 var(--panel);
+      }
+      .chat__log::-webkit-scrollbar { width: 8px; }
+      .chat__log::-webkit-scrollbar-thumb { background: #777; border-radius: 4px; }
+
+      .bubble {
+        max-width: 100%; padding: 12px 16px; border-radius: 18px;
+        line-height: 1.45; font-size: .95rem; box-shadow: 0 4px 10px rgba(0,0,0,.22);
+      }
+      .bubble--user { align-self: flex-end; background: var(--chip); color: #fff; }
+      .bubble--ai { align-self: flex-start; background: #2d313a; color: var(--ink); }
+
+      form.chat__composer {
+        background: var(--header); border-top: 1px solid var(--border);
+        padding: 10px 12px; display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center;
+      }
+      .composer__input {
+        padding: 10px 14px; border: 1px solid transparent; border-radius: 22px;
+        background: #3a3d44; color: #fff; font-size: .95rem;
+      }
+      .composer__input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+      .composer__send {
+        inline-size: 42px; block-size: 42px; border: none; border-radius: 50%;
+        background: #555; cursor: pointer; display: grid; place-items: center;
+      }
+      .composer__send:hover { background: #777; }
+
+      .cards { display: grid; grid-template-columns: 1fr; gap: 12px; }
+      @media (min-width: 560px) { .cards { grid-template-columns: 1fr 1fr; } }
+      .card { background: #22262d; border: 1px solid #2f343c; border-radius: 14px; padding: 12px; }
+      .card h3 { margin: 0 0 6px; font-size: 1rem; color: #fff; }
+      .meta { display: grid; gap: 4px; font-size: .82rem; color: var(--ink-dim); }
+      .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+      .chip { font-size: .75rem; padding: 4px 8px; border-radius: 999px; background: #343a45; color: #e7e9ec; border: 1px solid #3e4652; }
+      .dim { color: var(--ink-dim); }
+      .rating { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; }
+      .stars { letter-spacing: 1px; font-size: .9rem; }
+      .badge { display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 999px; font-size: .75rem; background: rgba(22,199,132,.12); color: var(--good); border: 1px solid rgba(22,199,132,.35); }
+
+      .backdrop[hidden] { display: none !important; }
+      .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: grid; place-items: center; z-index: 30; }
+      .dialog { width: min(92vw, 440px); background: #23262d; color: #fff; border: 1px solid var(--border-2); border-radius: 14px; padding: 16px; }
+      .dialog__title { margin: 0 0 10px; font-size: 1.1rem; }
+      .dialog__desc { margin: 0 0 12px; color: #d5d6d8; font-size: .92rem; }
+      .field { display: grid; gap: 6px; margin-block: 8px; }
+      .field input { padding: 10px 12px; border-radius: 10px; border: 1px solid #3b414d; background: #2e333c; color: #fff; }
+      .dialog__actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+      .btn { padding: 8px 12px; border-radius: 10px; border: 1px solid #3b414d; background: #2e333c; color: #fff; cursor: pointer; }
+      .btn--primary { background: #0b9; border-color: #0b9; }
+
+      noscript { display: block; margin: 12px; color: #ffe08a; }
+    </style>
+  </head>
+
+  <!-- Server may inject ws URL here. If omitted, script will auto-build ws(s)://{host}/ws -->
+  <body data-ws-url="{{ ws_url }}">
+    <div class="chat" id="chat-root">
+      <header class="chat__header">
+        <h1 class="chat__title">Professor</h1>
+        <span
+          id="connStatus"
+          class="status status--disconnected"
+          role="status"
+          aria-live="polite"
+          aria-label="Disconnected"
+          title="Disconnected"
+        ></span>
+      </header>
+
+      <nav class="chat__quick" aria-label="Quick actions">
+        <button class="qa-btn" data-action="open-name" type="button" aria-controls="dlgName" aria-haspopup="dialog">
+          <span class="qa-dot" aria-hidden="true"></span>
+          <span>Search Professor by name.</span>
+        </button>
+        <button class="qa-btn" data-action="open-uni" type="button" aria-controls="dlgUni" aria-haspopup="dialog">
+          <span class="qa-dot" aria-hidden="true"></span>
+          <span>Search Professor by university.</span>
+        </button>
+      </nav>
+
+      <main>
+        <section aria-labelledby="chat-label">
+          <h2 id="chat-label" class="sr-only">Conversation</h2>
+          <ul
+            id="messages"
+            class="chat__log"
+            role="log"
+            aria-live="polite"
+            aria-relevant="additions"
+            aria-atomic="false"
+          >
+            <li class="bubble bubble--ai">
+              Welcome! Choose an option above, or type a query (e.g., <em>Find professor "Todd Farchione" at Harvard</em>).
+            </li>
+          </ul>
+        </section>
+      </main>
+
+      <form class="chat__composer" id="composerForm" aria-label="Send a message">
+        <label class="sr-only" for="composerInput">Message</label>
+        <input
+          id="composerInput"
+          class="composer__input"
+          name="message"
+          placeholder="Type a message…"
+          autocomplete="off"
+          enterkeyhint="send"
+          aria-label="Type your message"
+        />
+        <button class="composer__send" id="composerSend" type="submit" aria-label="Send message">
+          <svg class="icon" aria-hidden="true" width="18" height="18" viewBox="0 0 24 24">
+            <path d="M2,21 L23,12 L2,3 L2,10 L17,12 L2,14 Z" fill="#fff" />
+          </svg>
+        </button>
+      </form>
+
+      <!-- Dialog: Search by Name -->
+      <div class="backdrop" id="dlgNameBackdrop" hidden aria-hidden="true">
+        <div
+          class="dialog"
+          id="dlgName"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="dlgNameTitle"
+          aria-describedby="dlgNameDesc"
+        >
+          <h2 class="dialog__title" id="dlgNameTitle">Search Professor by Name</h2>
+          <p class="dialog__desc" id="dlgNameDesc">Enter a professor’s name. Optionally include a university to refine the search.</p>
+
+          <form id="dlgNameForm">
+            <div class="field">
+              <label for="nm_name">Professor name <span aria-hidden="true">*</span></label>
+              <input id="nm_name" name="nm_name" required placeholder='e.g., "Todd Farchione"' aria-required="true" />
+            </div>
+            <div class="field">
+              <label for="nm_school">University (optional)</label>
+              <input id="nm_school" name="nm_school" placeholder="e.g., Harvard University" />
+            </div>
+            <div class="dialog__actions">
+              <button class="btn" data-action="cancel-name" type="button">Cancel</button>
+              <button class="btn btn--primary" type="submit">Search</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- Dialog: Search by University -->
+      <div class="backdrop" id="dlgUniBackdrop" hidden aria-hidden="true">
+        <div
+          class="dialog"
+          id="dlgUni"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="dlgUniTitle"
+          aria-describedby="dlgUniDesc"
+        >
+          <h2 class="dialog__title" id="dlgUniTitle">Search Professor by University</h2>
+          <p class="dialog__desc" id="dlgUniDesc">Enter the university name. Optionally filter by a name fragment.</p>
+
+          <form id="dlgUniForm">
+            <div class="field">
+              <label for="un_school">University <span aria-hidden="true">*</span></label>
+              <input id="un_school" name="un_school" required placeholder="e.g., Boston University" aria-required="true" />
+            </div>
+            <div class="field">
+              <label for="un_filter">Name filter (optional)</label>
+              <input id="un_filter" name="un_filter" placeholder='e.g., "Todd"' />
+            </div>
+            <div class="dialog__actions">
+              <button class="btn" data-action="cancel-uni" type="button">Cancel</button>
+              <button class="btn btn--primary" type="submit">Search</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <noscript>JavaScript is required for chat. Please enable JavaScript and reload.</noscript>
+
+    <script>
+      (() => {
+        "use strict";
+
+        // ---------------- Constants ----------------
+        const STREAM_START = "<STREAM>";
+        const STREAM_END = "<END>";
+
+        // ---------------- DOM helpers ----------------
+        const $ = (sel, root = document) => root.querySelector(sel);
+        const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+        const logEl = $("#messages");
+        const form = $("#composerForm");
+        const input = $("#composerInput");
+        const connStatus = $("#connStatus");
+
+        // Dialogs
+        const dlgNameBackdrop = $("#dlgNameBackdrop");
+        const dlgName = $("#dlgName");
+        const dlgNameForm = $("#dlgNameForm");
+        const nmName = $("#nm_name");
+        const nmSchool = $("#nm_school");
+
+        const dlgUniBackdrop = $("#dlgUniBackdrop");
+        const dlgUni = $("#dlgUni");
+        const dlgUniForm = $("#dlgUniForm");
+        const unSchool = $("#un_school");
+        const unFilter = $("#un_filter");
+
+        // Quick actions
+        const openNameBtn = $('[data-action="open-name"]');
+        const openUniBtn = $('[data-action="open-uni"]');
+        const cancelNameBtn = $('[data-action="cancel-name"]');
+        const cancelUniBtn = $('[data-action="cancel-uni"]');
+
+        // ---------------- Connection state ----------------
+        let ws = null;
+        let isStreaming = false;
+        let streamBuffer = "";
+        let streamingNode = null;
+        let lastDialogTrigger = null;
+
+        const wsUrl = (() => {
+          const raw = document.body.getAttribute("data-ws-url");
+          // If server injected a value and it's not a template placeholder, use it.
+          if (raw && !raw.includes("{{") && raw.trim() !== "") return raw.trim();
+          // Otherwise build it from the current origin, default path /ws
+          const scheme = location.protocol === "https:" ? "wss" : "ws";
+          return `${scheme}://${location.host}/ws`;
+        })();
+
+        function setStatus(state) {
+          connStatus.className =
+            "status " +
+            (state === "connected"
+              ? "status--connected"
+              : state === "connecting"
+              ? "status--connecting"
+              : "status--disconnected");
+          const label = state.charAt(0).toUpperCase() + state.slice(1);
+          connStatus.setAttribute("aria-label", label);
+          connStatus.title = label;
+        }
+
+        function connectWebSocket() {
+          if (!wsUrl) {
+            pushAI('⚠️ No server URL provided. Ensure <code>data-ws-url</code> is set or the page is served from your app.');
+            return;
+          }
+          setStatus("connecting");
+
+          try { ws && ws.close(); } catch {}
+          ws = new WebSocket(wsUrl);
+
+          ws.onopen = () => setStatus("connected");
+          ws.onerror = () => setStatus("disconnected");
+          ws.onclose = () => {
+            setStatus("disconnected");
+            // Gentle retry after 2s
+            setTimeout(connectWebSocket, 2000);
+          };
+          ws.onmessage = onWSMessage;
+        }
+
+        // ---------------- Rendering helpers ----------------
+        function escapeHTML(s) {
+          return String(s)
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll('"', "&quot;")
+            .replaceAll("'", "&#039;");
+        }
+        function escapeAttr(url) { return String(url).replaceAll('"', "&quot;"); }
+
+        function md(markdown) {
+          let html = String(markdown ?? "").replace(/\r/g, "").replace(/\n/g, "<br>");
+          html = html.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>").replace(/\*(.*?)\*/g, "<em>$1</em>");
+          html = html
+            .replace(/^### (.*?)$/gm, "<h3>$1</h3>")
+            .replace(/^## (.*?)$/gm, "<h2>$1</h2>")
+            .replace(/^# (.*?)$/gm, "<h1>$1</h1>");
+          html = html.replace(
+            /(?:^|\n)- (.*?)(?=\n(?!- )|$)/gs,
+            (m) => {
+              const items = m.trim().split(/\n- /g).map(s => s.replace(/^- /,'').trim());
+              return "<ul>" + items.map(it => `<li>${escapeHTML(it)}</li>`).join("") + "</ul>";
+            }
+          );
+          html = html.replace(/\[(.*?)\]\((.*?)\)/g, (_, t, u) => `<a href="${escapeAttr(u)}" target="_blank" rel="noopener">${escapeHTML(t)}</a>`);
+          return html;
+        }
+
+        function pushUser(text) {
+          const li = document.createElement("li");
+          li.className = "bubble bubble--user";
+          li.textContent = text;
+          logEl.appendChild(li);
+          logEl.scrollTop = logEl.scrollHeight;
+        }
+        function pushAI(htmlString) {
+          const li = document.createElement("li");
+          li.className = "bubble bubble--ai";
+          li.innerHTML = htmlString;
+          logEl.appendChild(li);
+          logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        // ---------------- RMP list -> Pretty cards ----------------
+        function tryParseRMP(rawText) {
+          const text = String(rawText ?? "").replace(/\r/g, "").trim();
+          const chunks = text.split(/\n?\s*(?:\d+)\.\s+/).filter(Boolean);
+
+          const re = new RegExp(
+            String.raw`(?:\*\*)?([^*\n-]+?)(?:\*\*)?\s*-\s*(?:\*\*Department:\*\*|Department:)\s*([^-\n]+?)\s*` +
+            String.raw`-\s*(?:\*\*School:\*\*|School:)\s*([^-\n]+?)\s*-\s*(?:\*\*City:\*\*|City:)\s*([^-\n]+?)\s*` +
+            String.raw`-\s*(?:\*\*Average Rating:\*\*|Average Rating:)\s*([0-9.]+)\s*\((\d+)\s*ratings?\)\s*` +
+            String.raw`-\s*(?:\*\*Would Take Again:\*\*|Would Take Again:)\s*([0-9]{1,3}%)`,
+            "i"
+          );
+
+          const out = [];
+          for (const c of chunks) {
+            const m = c.match(re);
+            if (!m) continue;
+            out.push({
+              name: m[1].trim(),
+              department: m[2].trim(),
+              school: m[3].trim(),
+              city: m[4].trim(),
+              rating: parseFloat(m[5]),
+              ratingsCount: parseInt(m[6], 10),
+              wouldAgain: m[7].trim()
+            });
+          }
+          return out.length ? out : null;
+        }
+        function stars(n) {
+          const r = Math.max(0, Math.min(5, Math.round(n)));
+          return "★".repeat(r) + "☆".repeat(5 - r);
+        }
+        function renderCards(items) {
+          const card = (it) => `
+            <article class="card" aria-label="Professor card">
+              <h3>${escapeHTML(it.name)}</h3>
+              <div class="meta">
+                <div>${escapeHTML(it.school)} • ${escapeHTML(it.city)}</div>
+                <div class="chips">
+                  <span class="chip">${escapeHTML(it.department)}</span>
+                  <span class="chip dim" aria-label="${it.ratingsCount} rating${it.ratingsCount === 1 ? "" : "s"}">
+                    ${it.ratingsCount} rating${it.ratingsCount === 1 ? "" : "s"}
+                  </span>
+                </div>
+              </div>
+              <div class="rating" aria-label="Average rating ${it.rating.toFixed(1)} out of 5">
+                <span class="stars" aria-hidden="true">${stars(it.rating)}</span>
+                <span class="badge">Would take again: ${escapeHTML(it.wouldAgain)}</span>
+              </div>
+            </article>
+          `;
+          return `<div class="cards" role="list">${items.map(card).join("")}</div>`;
+        }
+        function maybeRenderCards(raw) {
+          const parsed = tryParseRMP(raw);
+          return parsed ? renderCards(parsed) : null;
+        }
+
+        // ---------------- WebSocket handlers ----------------
+        function onWSMessage(event) {
+          if (event.data === STREAM_START) {
+            isStreaming = true;
+            streamBuffer = "";
+            streamingNode = document.createElement("li");
+            streamingNode.className = "bubble bubble--ai";
+            streamingNode.setAttribute("aria-live", "polite");
+            logEl.appendChild(streamingNode);
+            logEl.scrollTop = logEl.scrollHeight;
+            return;
+          }
+          if (event.data === STREAM_END) {
+            const cards = maybeRenderCards(streamBuffer.trim());
+            streamingNode.innerHTML = cards ? cards : md(streamBuffer);
+            streamingNode.removeAttribute("aria-live");
+            streamingNode = null;
+            isStreaming = false;
+            streamBuffer = "";
+            logEl.scrollTop = logEl.scrollHeight;
+            return;
+          }
+          if (isStreaming) {
+            // During stream, show raw text for speed; format on <END>
+            streamBuffer += event.data;
+            streamingNode.textContent = streamBuffer;
+            logEl.scrollTop = logEl.scrollHeight;
+          } else {
+            const maybe = maybeRenderCards(event.data.trim());
+            pushAI(maybe ? maybe : md(event.data));
+          }
+        }
+
+        // ---------------- Sending ----------------
+        form.addEventListener("submit", (e) => {
+          e.preventDefault();
+          const text = input.value.trim();
+          if (!text) return;
+
+          // Text triggers that open dialogs
+          if (/^search\s+professor\s+by\s+name\.?$/i.test(text)) { lastDialogTrigger = input; openDialog(dlgNameBackdrop, dlgName, nmName); return; }
+          if (/^search\s+professor\s+by\s+university\.?$/i.test(text)) { lastDialogTrigger = input; openDialog(dlgUniBackdrop, dlgUni, unSchool); return; }
+
+          pushUser(text);
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(text);
+          } else {
+            pushAI("⚠️ Disconnected. Reconnecting… please press Send again.");
+            try { ws && ws.close(); } catch {}
+            connectWebSocket();
+          }
+          input.value = "";
+        });
+
+        // ---------------- Quick actions ----------------
+        openNameBtn.addEventListener("click", () => { lastDialogTrigger = openNameBtn; openDialog(dlgNameBackdrop, dlgName, nmName); });
+        openUniBtn.addEventListener("click", () => { lastDialogTrigger = openUniBtn; openDialog(dlgUniBackdrop, dlgUni, unSchool); });
+
+        // ---------------- Dialog logic (a11y) ----------------
+        function openDialog(backdrop, dialog, firstField) {
+          backdrop.hidden = false;
+          backdrop.setAttribute("aria-hidden", "false");
+          trapFocus(dialog);
+          requestAnimationFrame(() => firstField.focus());
+
+          const onBackdrop = (e) => { if (e.target === backdrop) closeDialog(backdrop); };
+          const onEsc = (e) => { if (e.key === "Escape") { e.preventDefault(); closeDialog(backdrop); } };
+
+          backdrop.addEventListener("click", onBackdrop, { once: true });
+          dialog.addEventListener("keydown", onEsc, { once: true });
+        }
+        function closeDialog(backdrop) {
+          backdrop.hidden = true;
+          backdrop.setAttribute("aria-hidden", "true");
+          (lastDialogTrigger || openNameBtn).focus();
+        }
+        function trapFocus(modal) {
+          const focusable = $$(
+            'a[href], area[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+            modal
+          );
+          if (!focusable.length) return;
+          const first = focusable[0], last = focusable[focusable.length - 1];
+
+          function handleTab(e) {
+            if (e.key !== "Tab") return;
+            if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+            else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+          }
+          modal.addEventListener("keydown", handleTab);
+          const observer = new MutationObserver(() => {
+            if (modal.closest("[hidden]")) { modal.removeEventListener("keydown", handleTab); observer.disconnect(); }
+          });
+          observer.observe(modal.parentElement || document.body, { attributes: true, subtree: true });
+        }
+
+        // Dialog actions — Name
+        cancelNameBtn.addEventListener("click", () => closeDialog(dlgNameBackdrop));
+        dlgNameForm.addEventListener("submit", (e) => {
+          e.preventDefault();
+          const name = nmName.value.trim();
+          const school = nmSchool.value.trim();
+          if (!name) { nmName.focus(); return; }
+          closeDialog(dlgNameBackdrop);
+          const msg = school ? `Find professor "${name}" at ${school}` : `Find professor "${name}"`;
+          pushUser(msg);
+          ws && ws.readyState === WebSocket.OPEN ? ws.send(msg) : pushAI("⚠️ Disconnected. Reconnecting…");
+        });
+
+        // Dialog actions — University
+        cancelUniBtn.addEventListener("click", () => closeDialog(dlgUniBackdrop));
+        dlgUniForm.addEventListener("submit", (e) => {
+          e.preventDefault();
+          const uni = unSchool.value.trim();
+          const filt = unFilter.value.trim();
+          if (!uni) { unSchool.focus(); return; }
+          closeDialog(dlgUniBackdrop);
+          const msg = filt ? `Find professors at ${uni} named "${filt}"` : `Find professors at ${uni}`;
+          pushUser(msg);
+          ws && ws.readyState === WebSocket.OPEN ? ws.send(msg) : pushAI("⚠️ Disconnected. Reconnecting…");
+        });
+
+        // ---------------- Boot ----------------
+        connectWebSocket();
+      })();
+    </script>
+  </body>
+</html>

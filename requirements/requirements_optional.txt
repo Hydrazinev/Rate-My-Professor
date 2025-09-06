@@ -1,0 +1,47 @@
+# Optional dependencies for enhanced features
+# Install only if you need these specific features
+
+# Enhanced Vector Search
+faiss-cpu==1.8.0  # Alternative to Pinecone for local development
+chromadb==0.5.3   # Alternative vector database
+
+# Advanced NLP Features
+sentence-transformers==3.0.1
+transformers==4.44.0
+torch==2.4.0  # CPU version
+
+# Data Processing
+pandas==2.2.2
+numpy==2.1.0
+scipy==1.14.0
+
+# Web Scraping (for RateMyProfessor tools)
+beautifulsoup4==4.12.3
+selenium==4.23.1
+requests==2.32.3
+aiohttp==3.10.2
+
+# Image Processing (if handling professor images)
+Pillow==10.4.0
+opencv-python==4.10.0.84
+
+# Export/Import Features
+openpyxl==3.1.5  # Excel support
+python-docx==1.1.2  # Word document support
+
+# API Rate Limiting
+slowapi==0.1.9
+limits==3.13.0
+
+# Advanced Async Features
+asyncio-mqtt==0.16.2  # If using MQTT
+celery==5.4.0  # Task queue (Redis/RabbitMQ backend)
+
+# Machine Learning Evaluation
+scikit-learn==1.5.1
+matplotlib==3.9.2
+seaborn==0.13.2
+
+# Development Database (SQLite enhanced)
+sqlite-utils==3.37
+datasette==0.64.8

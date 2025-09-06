@@ -1,0 +1,31 @@
+# Production dependencies
+# Include base requirements
+
+
+# Production ASGI Server
+gunicorn==22.0.0
+
+# Monitoring & Error Tracking
+sentry-sdk[fastapi]==2.8.0
+prometheus-client==0.20.0
+
+# Caching & Session Storage
+redis==5.0.8
+aioredis==2.0.1
+
+# Database (if needed for session persistence)
+asyncpg==0.29.0  # PostgreSQL async driver
+sqlalchemy[asyncio]==2.0.32
+alembic==1.13.2  # Database migrations
+
+# Enhanced Security
+cryptography==43.0.0
+bcrypt==4.2.0
+
+# Performance & Optimization
+orjson==3.10.7  # Faster JSON processing
+ujson==5.10.0   # Alternative fast JSON
+cachetools==5.4.0  # Caching utilities
+
+# Monitoring & Health Checks
+psutil==6.0.0  # System monitoring

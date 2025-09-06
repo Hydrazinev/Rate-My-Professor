@@ -1,0 +1,19 @@
+query SearchProfessors($query: TeacherSearchQuery!, $count: Int!) {
+  newSearch {
+    teachers(query: $query, first: $count) {
+      edges {
+        node {
+          id
+          legacyId
+          firstName
+          lastName
+          department
+          school { id legacyId name city state }
+          avgRating
+          numRatings
+          wouldTakeAgainPercentRounded
+        }
+      }
+    }
+  }
+}
