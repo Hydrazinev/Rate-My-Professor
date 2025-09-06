@@ -9,7 +9,6 @@ redis==5.0.4
 openai==1.35.10
 pinecone==5.1.0
 
-# --- LangChain stack (needed for your imports) ---
 langchain==0.2.14
 langchain-openai==0.1.22
 langchain-community==0.2.12
