@@ -10,7 +10,10 @@ RUN python -m pip install --upgrade pip setuptools wheel && \
 
 COPY . .
 
+# Optional: default for local; Railway will override PORT
 ENV PORT=8000
-# Use shell form so $PORT expands
-CMD ["sh","-c","uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+
+# Force shell, and print PORT so we can see it in logs
+ENTRYPOINT ["sh","-c"]
+CMD ["echo PORT=${PORT}; uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
 
