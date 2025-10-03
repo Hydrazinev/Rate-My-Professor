@@ -154,6 +154,55 @@
       .stars { letter-spacing: 1px; font-size: .9rem; }
       .badge { display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 999px; font-size: .75rem; background: rgba(22,199,132,.12); color: var(--good); border: 1px solid rgba(22,199,132,.35); }
 
+      /* ---------------- LOADER (styled to match your interface) ---------------- */
+      .loader {
+        align-self: flex-start;
+        display: flex; align-items: center; gap: 12px;
+        padding: 12px 14px;
+        border-radius: 18px;
+        background: #2d313a;
+        border: 1px solid var(--border);
+        box-shadow: 0 4px 10px rgba(0,0,0,.22);
+      }
+      .loader__spinner {
+        width: 18px; height: 18px; border-radius: 50%;
+        border: 2px solid rgba(255,255,255,.08);
+        border-top-color: var(--accent);
+        animation: spin 900ms linear infinite;
+        flex: none;
+      }
+      .loader__content {
+        display: grid; gap: 6px; width: clamp(180px, 42vw, 300px);
+      }
+      .loader__line {
+        height: 8px; border-radius: 6px; overflow: hidden;
+        background: linear-gradient(90deg,
+          rgba(255,255,255,.04) 0%,
+          rgba(255,255,255,.10) 50%,
+          rgba(255,255,255,.04) 100%);
+        background-size: 200% 100%;
+        animation: shimmer 1.4s ease-in-out infinite;
+      }
+      .loader__line--short { width: 55%; }
+      .loader__line--med { width: 80%; }
+      .loader__line--long { width: 100%; }
+      .loader__status {
+        display: inline-flex; align-items: center; gap: 8px;
+        font-size: .8rem; color: var(--ink-dim);
+        opacity: .9;
+      }
+      .loader__dot {
+        width: 6px; height: 6px; border-radius: 50%;
+        background: var(--accent);
+        animation: pulse 1.6s ease-in-out infinite;
+      }
+      .loader__dot:nth-child(2) { animation-delay: .2s; }
+      .loader__dot:nth-child(3) { animation-delay: .4s; }
+
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: 0% 0; } }
+      @keyframes pulse { 0%,100% { opacity:.35; transform:scale(.85); } 50% { opacity:1; transform:scale(1); } }
+
       .backdrop[hidden] { display: none !important; }
       .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: grid; place-items: center; z-index: 30; }
       .dialog { width: min(92vw, 440px); background: #23262d; color: #fff; border: 1px solid var(--border-2); border-radius: 14px; padding: 16px; }
@@ -337,11 +386,12 @@
         let streamingNode = null;
         let lastDialogTrigger = null;
 
+        // Fallback loader reference if server doesn't send markers
+        let pendingLoader = null;
+
         const wsUrl = (() => {
           const raw = document.body.getAttribute("data-ws-url");
-          // If server injected a value and it's not a template placeholder, use it.
           if (raw && !raw.includes("{{") && raw.trim() !== "") return raw.trim();
-          // Otherwise build it from the current origin, default path /ws
           const scheme = location.protocol === "https:" ? "wss" : "ws";
           return `${scheme}://${location.host}/ws`;
         })();
@@ -401,7 +451,7 @@
             /(?:^|\n)- (.*?)(?=\n(?!- )|$)/gs,
             (m) => {
               const items = m.trim().split(/\n- /g).map(s => s.replace(/^- /,'').trim());
-              return "<ul>" + items.map(it => `<li>${escapeHTML(it)}</li>`).join("") + "</ul>";
+              return "<ul>" + items.map(it => `<li>${escapeHTML(it)}</li>`).join("");
             }
           );
           html = html.replace(/\[(.*?)\]\((.*?)\)/g, (_, t, u) => `<a href="${escapeAttr(u)}" target="_blank" rel="noopener">${escapeHTML(t)}</a>`);
@@ -423,23 +473,49 @@
           logEl.scrollTop = logEl.scrollHeight;
         }
 
+        // New: polished loader bubble with spinner + shimmer lines + subtle dots
+        function pushLoader() {
+          const li = document.createElement("li");
+          li.className = "loader";
+          li.setAttribute("aria-live", "polite");
+          li.innerHTML = `
+            <div class="loader__spinner" aria-hidden="true"></div>
+            <div class="loader__content">
+              <div class="loader__line loader__line--long"></div>
+              <div class="loader__line loader__line--med"></div>
+              <div class="loader__line loader__line--short"></div>
+              <div class="loader__status">
+                <span>Thinking</span>
+                <span class="loader__dot"></span>
+                <span class="loader__dot"></span>
+                <span class="loader__dot"></span>
+              </div>
+            </div>`;
+          logEl.appendChild(li);
+          logEl.scrollTop = logEl.scrollHeight;
+          return li;
+        }
+
         // ---------------- RMP list -> Pretty cards ----------------
+        // Robust parser: matches 1+ professors whether or not items are numbered.
         function tryParseRMP(rawText) {
           const text = String(rawText ?? "").replace(/\r/g, "").trim();
-          const chunks = text.split(/\n?\s*(?:\d+)\.\s+/).filter(Boolean);
 
-          const re = new RegExp(
-            String.raw`(?:\*\*)?([^*\n-]+?)(?:\*\*)?\s*-\s*(?:\*\*Department:\*\*|Department:)\s*([^-\n]+?)\s*` +
-            String.raw`-\s*(?:\*\*School:\*\*|School:)\s*([^-\n]+?)\s*-\s*(?:\*\*City:\*\*|City:)\s*([^-\n]+?)\s*` +
-            String.raw`-\s*(?:\*\*Average Rating:\*\*|Average Rating:)\s*([0-9.]+)\s*\((\d+)\s*ratings?\)\s*` +
-            String.raw`-\s*(?:\*\*Would Take Again:\*\*|Would Take Again:)\s*([0-9]{1,3}%)`,
-            "i"
+          // Primary: global match finder (handles single or many, numbered or not)
+          const reGlobal = new RegExp(
+            String.raw`(?:^|\n)\s*(?:\d+\.\s*)?` +                       // optional "1. ", "2. " etc
+            String.raw`(?:\*\*)?([^*\n-]+?)(?:\*\*)?\s*-\s*` +           // name
+            String.raw`(?:\*\*Department:\*\*|Department:)\s*([^-\n]+?)\s*-\s*` +
+            String.raw`(?:\*\*School:\*\*|School:)\s*([^-\n]+?)\s*-\s*` +
+            String.raw`(?:\*\*City:\*\*|City:)\s*([^-\n]+?)\s*-\s*` +
+            String.raw`(?:\*\*Average Rating:\*\*|Average Rating:)\s*([0-9.]+)\s*\((\d+)\s*ratings?\)\s*-\s*` +
+            String.raw`(?:\*\*Would Take Again:\*\*|Would Take Again:)\s*([0-9]{1,3}%)`,
+            "gi"
           );
 
           const out = [];
-          for (const c of chunks) {
-            const m = c.match(re);
-            if (!m) continue;
+          let m;
+          while ((m = reGlobal.exec(text)) !== null) {
             out.push({
               name: m[1].trim(),
               department: m[2].trim(),
@@ -450,8 +526,37 @@
               wouldAgain: m[7].trim()
             });
           }
+
+          // Fallback (older format): split by numbering and try a single-match regex
+          if (!out.length) {
+            const blocks = text.split(/\n?\s*(?:\d+)\.\s+/).filter(Boolean);
+            const reSingle = new RegExp(
+              String.raw`(?:\*\*)?([^*\n-]+?)(?:\*\*)?\s*-\s*` +
+              String.raw`(?:\*\*Department:\*\*|Department:)\s*([^-\n]+?)\s*-\s*` +
+              String.raw`(?:\*\*School:\*\*|School:)\s*([^-\n]+?)\s*-\s*` +
+              String.raw`(?:\*\*City:\*\*|City:)\s*([^-\n]+?)\s*-\s*` +
+              String.raw`(?:\*\*Average Rating:\*\*|Average Rating:)\s*([0-9.]+)\s*\((\d+)\s*ratings?\)\s*-\s*` +
+              String.raw`(?:\*\*Would Take Again:\*\*|Would Take Again:)\s*([0-9]{1,3}%)`,
+              "i"
+            );
+            for (const c of blocks) {
+              const mm = c.match(reSingle);
+              if (!mm) continue;
+              out.push({
+                name: mm[1].trim(),
+                department: mm[2].trim(),
+                school: mm[3].trim(),
+                city: mm[4].trim(),
+                rating: parseFloat(mm[5]),
+                ratingsCount: parseInt(mm[6], 10),
+                wouldAgain: mm[7].trim()
+              });
+            }
+          }
+
           return out.length ? out : null;
         }
+
         function stars(n) {
           const r = Math.max(0, Math.min(5, Math.round(n)));
           return "★".repeat(r) + "☆".repeat(5 - r);
@@ -484,35 +589,50 @@
 
         // ---------------- WebSocket handlers ----------------
         function onWSMessage(event) {
-          if (event.data === STREAM_START) {
+          const data = String(event.data ?? "");
+          const trimmed = data.trim();
+
+          // STREAM start
+          if (trimmed === STREAM_START) {
             isStreaming = true;
             streamBuffer = "";
-            streamingNode = document.createElement("li");
-            streamingNode.className = "bubble bubble--ai";
-            streamingNode.setAttribute("aria-live", "polite");
-            logEl.appendChild(streamingNode);
-            logEl.scrollTop = logEl.scrollHeight;
+            // Replace fallback loader if present; otherwise create a loader
+            streamingNode = pendingLoader || pushLoader();
+            pendingLoader = null;
             return;
           }
-          if (event.data === STREAM_END) {
+
+          // STREAM end
+          if (trimmed === STREAM_END) {
             const cards = maybeRenderCards(streamBuffer.trim());
-            streamingNode.innerHTML = cards ? cards : md(streamBuffer);
+            streamingNode.className = "bubble bubble--ai";
             streamingNode.removeAttribute("aria-live");
+            streamingNode.innerHTML = cards ? cards : md(streamBuffer);
             streamingNode = null;
             isStreaming = false;
             streamBuffer = "";
-            logEl.scrollTop = logEl.scrollHeight;
             return;
           }
+
+          // During stream
           if (isStreaming) {
-            // During stream, show raw text for speed; format on <END>
-            streamBuffer += event.data;
-            streamingNode.textContent = streamBuffer;
-            logEl.scrollTop = logEl.scrollHeight;
-          } else {
-            const maybe = maybeRenderCards(event.data.trim());
-            pushAI(maybe ? maybe : md(event.data));
+            streamBuffer += data;
+            return;
           }
+
+          // No markers scenario: if we have a pending loader, convert it on first message
+          if (pendingLoader) {
+            const cards = maybeRenderCards(trimmed);
+            pendingLoader.className = "bubble bubble--ai";
+            pendingLoader.removeAttribute("aria-live");
+            pendingLoader.innerHTML = cards ? cards : md(data);
+            pendingLoader = null;
+            return;
+          }
+
+          // Normal non-streaming message
+          const maybe = maybeRenderCards(trimmed);
+          pushAI(maybe ? maybe : md(data));
         }
 
         // ---------------- Sending ----------------
@@ -526,10 +646,22 @@
           if (/^search\s+professor\s+by\s+university\.?$/i.test(text)) { lastDialogTrigger = input; openDialog(dlgUniBackdrop, dlgUni, unSchool); return; }
 
           pushUser(text);
+
+          // Show fallback loader immediately; it will be replaced by stream start or first message
+          pendingLoader = pushLoader();
+
           if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(text);
           } else {
-            pushAI("⚠️ Disconnected. Reconnecting… please press Send again.");
+            setTimeout(() => {
+              if (pendingLoader) {
+                pendingLoader.className = "bubble bubble--ai";
+                pendingLoader.innerHTML = "⚠️ Disconnected. Reconnecting… please press Send again.";
+                pendingLoader = null;
+              } else {
+                pushAI("⚠️ Disconnected. Reconnecting… please press Send again.");
+              }
+            }, 400);
             try { ws && ws.close(); } catch {}
             connectWebSocket();
           }
@@ -588,6 +720,7 @@
           closeDialog(dlgNameBackdrop);
           const msg = school ? `Find professor "${name}" at ${school}` : `Find professor "${name}"`;
           pushUser(msg);
+          pendingLoader = pushLoader();
           ws && ws.readyState === WebSocket.OPEN ? ws.send(msg) : pushAI("⚠️ Disconnected. Reconnecting…");
         });
 
@@ -601,6 +734,7 @@
           closeDialog(dlgUniBackdrop);
           const msg = filt ? `Find professors at ${uni} named "${filt}"` : `Find professors at ${uni}`;
           pushUser(msg);
+          pendingLoader = pushLoader();
           ws && ws.readyState === WebSocket.OPEN ? ws.send(msg) : pushAI("⚠️ Disconnected. Reconnecting…");
         });
 
