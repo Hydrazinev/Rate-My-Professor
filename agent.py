@@ -129,6 +129,11 @@ class ProfessorRaterAgent:
     ]
     _OUT_OF_SCOPE_REGEX = re.compile("|".join(_OUT_OF_SCOPE_PATTERNS), re.IGNORECASE)
 
+    # NEW: heuristic to detect likely human names (2–5 tokens, reasonable length)
+    _NAME_REGEX = re.compile(
+        r"^[A-Za-zÀ-ÖØ-öø-ÿ'.-]+\s+[A-Za-zÀ-ÖØ-öø-ÿ'.-]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ'.-]+){0,3}$"
+    )
+
     def __init__(self, config: AgentConfig | None = None) -> None:
         self._config = config or AgentConfig()
         if not self._config.pinecone_api_key:
@@ -258,9 +263,15 @@ class ProfessorRaterAgent:
             logger.info("intent=true (keyword match)")
             return True
 
-        # Fourth check: LLM-based intent classification (if enabled)
+        # NEW: Fourth check: treat likely human names as professor intent
+        bare = text.strip()
+        if self._NAME_REGEX.match(bare) and (2 <= len(bare.split()) <= 5) and (3 <= len(bare) <= 60):
+            logger.info("intent=true (name heuristic)")
+            return True
+
+        # Fifth check: LLM-based intent classification (if enabled)
         if not self._config.enable_llm_intent_check:
-            logger.info("intent=false (no keyword match, LLM check disabled)")
+            logger.info("intent=false (no keyword/name match, LLM check disabled)")
             return False
 
         try:
