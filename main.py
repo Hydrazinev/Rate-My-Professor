@@ -6,24 +6,32 @@ import os
 from pathlib import Path
 from typing import Iterable, Optional
 
-import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from starlette.middleware.cors import CORSMiddleware
 
 from agent import create_agent
 
 # ---------- Logging ----------
-logger = logging.getLogger("uvicorn.error")
-logger.setLevel(logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+)
+logger = logging.getLogger("rmp")
 
-# ---------- App setup ----------
-app = FastAPI(title="Professor Chatbot", version="1.0.0")
+# ---------- App ----------
+app = FastAPI(title="Rate My Professor", version="1.0.0")
 
-# CORS (relax now; lock down later if needed)
+# CORS (adjust origins as needed)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # tighten for production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -31,18 +39,17 @@ app.add_middleware(
 
 # ---------- Files / Paths ----------
 BASE_DIR = Path(__file__).resolve().parent
-CHAT_HTML = BASE_DIR / "chat.html"                  # served if exists (Railway)
-PUBLIC_CHAT_HTML = BASE_DIR / "public" / "chat.html"  # alt path if you keep it in /public
+CHAT_HTML = BASE_DIR / "chat.html"                    # legacy location
+PUBLIC_CHAT_HTML = BASE_DIR / "public" / "chat.html"  # Vercel CDN location
 
 # ---------- Agent ----------
-# Initialize once (env vars must be set in Railway)
+# Initialize once; missing env vars should be reflected in /healthz
 try:
     agent = create_agent()
     logger.info("Agent created successfully.")
-except Exception as e:
+except Exception:
     logger.exception("Failed to create agent at startup.")
-    agent = None  # We'll handle None at runtime so WS still accepts.
-
+    agent = None  # Allow server to start; endpoints will handle None gracefully.
 
 # ---------- Helpers ----------
 def locate_chat_html() -> Optional[Path]:
@@ -53,16 +60,17 @@ def locate_chat_html() -> Optional[Path]:
     return None
 
 def stream_agent_chunks(text: str) -> Iterable[str]:
-    """Yield chunks from agent.stream(text, chat_history=None)."""
+    """
+    Yield chunks from agent.stream(text, chat_history=None).
+    Modify this to match your agent's streaming API if needed.
+    """
     if agent is None:
-        # Don’t crash—surface a clear message to client
-        yield "Server not fully initialized (agent unavailable). Check environment variables and logs."
+        yield "Agent not initialized. Check environment variables."
         return
-    # Your agent.stream should be an iterator/generator of str chunks
+    # Example interface; adapt to your create_agent() implementation
     for chunk in agent.stream(text, chat_history=None):
-        if chunk:
-            yield str(chunk)
-
+        # Ensure each yielded item is a string
+        yield str(chunk)
 
 # ---------- Routes ----------
 @app.get("/health")
@@ -76,7 +84,7 @@ async def health():
 
 @app.get("/healthz")
 async def healthz():
-    # Redacted health: don’t leak secrets, just presence
+    # Redacted health; only presence of required envs
     env_ok = {
         "OPENAI_API_KEY": bool(os.environ.get("OPENAI_API_KEY")),
         "PINECONE_API_KEY": bool(os.environ.get("PINECONE_API_KEY")),
@@ -87,21 +95,55 @@ async def healthz():
     }
     return {"ok": True, "env": env_ok, "has_agent": agent is not None}
 
-@app.get("/")
-async def serve_chat():
+@app.get("/", include_in_schema=False)
+async def root():
+    # Prefer the CDN-served file if present (Vercel will serve /public/** statically)
+    if PUBLIC_CHAT_HTML.exists():
+        return RedirectResponse("/chat.html", status_code=307)
     html = locate_chat_html()
     if html:
         return FileResponse(str(html))
-    # Fallback if you deploy UI on Vercel
+    # Fallback JSON tells where to find UI
     return JSONResponse(
         {
-            "ok": True,
-            "message": "Frontend not found on this server. If you host UI on Vercel, open that URL. WebSocket is at /ws",
-            "ws": "/ws",
+            "message": "Upload chat.html to /public or repo root.",
+            "try": {
+                "ui": "/chat.html",
+                "docs": "/docs",
+                "health": "/health",
+                "sse": "/sse?q=hello",
+                "ws": "/ws (not supported on Vercel serverless)",
+            },
         }
     )
 
-# --- Debug echo websocket (sanity check) ---
+# ---------- SSE (Vercel-friendly streaming) ----------
+STREAM_START = "<STREAM>"
+STREAM_END = "<END>"
+
+@app.get("/sse")
+async def sse(request: Request, q: str):
+    """
+    Server-Sent Events endpoint for streaming model output.
+    Use from the browser with: new EventSource('/sse?q=hello')
+    """
+    def gen():
+        # Optional: early abort if client disconnects (best-effort)
+        yield f"data: {STREAM_START}\n\n"
+        try:
+            for chunk in stream_agent_chunks(q):
+                # If the client disconnected, stop (FastAPI/Starlette doesn't expose
+                # a perfect check; this keeps it simple and robust)
+                yield f"data: {chunk}\n\n"
+        except Exception:
+            logger.exception("SSE: error while streaming")
+            yield "data: \n\n"
+        finally:
+            yield f"data: {STREAM_END}\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+# ---------- WebSockets (fine locally; not for Vercel serverless) ----------
 @app.websocket("/ws-echo")
 async def ws_echo(ws: WebSocket):
     await ws.accept()
@@ -109,10 +151,10 @@ async def ws_echo(ws: WebSocket):
     try:
         while True:
             msg = await ws.receive_text()
-            logger.info(f"ws-echo: recv={msg!r}")
+            logger.info("ws-echo: recv=%r", msg)
             await ws.send_text(f"echo: {msg}")
     except WebSocketDisconnect as e:
-        logger.info(f"ws-echo: client disconnected code={e.code}")
+        logger.info("ws-echo: client disconnected code=%s", e.code)
     except Exception:
         logger.exception("ws-echo: unhandled error")
         try:
@@ -120,32 +162,19 @@ async def ws_echo(ws: WebSocket):
         except Exception:
             pass
 
-# --- Main chat websocket ---
-STREAM_START = "<STREAM>"
-STREAM_END = "<END>"
-
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
     logger.info("/ws: accepted")
     try:
-        while True:
-            user_text = await ws.receive_text()
-            logger.info(f"/ws: recv={user_text!r}")
-
-            # Start streamed response
-            await ws.send_text(STREAM_START)
-            try:
-                for chunk in stream_agent_chunks(user_text):
-                    await ws.send_text(chunk)
-            except Exception:
-                logger.exception("/ws: error while streaming from agent")
-                await ws.send_text("\n\n(⚠️ An error occurred while generating a response. Check server logs.)")
-            finally:
-                await ws.send_text(STREAM_END)
-
+        # Simple protocol: first message is the user text
+        first = await ws.receive_text()
+        await ws.send_text(STREAM_START)
+        for chunk in stream_agent_chunks(first):
+            await ws.send_text(chunk)
+        await ws.send_text(STREAM_END)
     except WebSocketDisconnect as e:
-        logger.info(f"/ws: client disconnected code={e.code}")
+        logger.info("/ws: client disconnected code=%s", e.code)
     except Exception:
         logger.exception("/ws: unhandled error")
         try:
@@ -153,8 +182,6 @@ async def ws_endpoint(ws: WebSocket):
         except Exception:
             pass
 
-
-# ---------- Entrypoint (local dev only) ----------
-if __name__ == "__main__":
-    # Local dev run; Railway uses your Dockerfile CMD
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True, log_level="info")
+# ---------- NOTE ----------
+# Do NOT include `if __name__ == "__main__": uvicorn.run(...)` here.
+# Vercel imports `app` from this module via index.py and manages the server.
