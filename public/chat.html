@@ -3,146 +3,844 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Professor Chatbot</title>
-
+  <title>Professor Chat Bot</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root{
-      --bg1:#0b0c10;--bg2:#1f2833;--panel:#1b1e23;--panel-2:#20242b;
-      --header:#21252b;--ink:#c5c6c7;--border:#2a2e35;--accent:#66fcf1;
+      --bg:#efe9dd;
+      --bg-shape:#dfd2be;
+      --panel:#f8f3ea;
+      --panel-soft:#f2ebdf;
+      --ink:#1f1a16;
+      --ink-soft:#6f6559;
+      --line:#d8c9b4;
+      --primary:#bd3f2b;
+      --secondary:#2b6b71;
+      --chip:#ece2d2;
+      --user:#281b15;
+      --user-ink:#fff6ec;
+      --shadow:0 24px 60px rgba(62,41,22,.15);
     }
+
+    html[data-theme="dark"]{
+      --bg:#121518;
+      --bg-shape:#1d242b;
+      --panel:#1b2026;
+      --panel-soft:#222830;
+      --ink:#e7edf5;
+      --ink-soft:#acb6c3;
+      --line:#37404c;
+      --primary:#8ca3bd;
+      --secondary:#5c8d88;
+      --chip:#2a313b;
+      --user:#dbe3ee;
+      --user-ink:#1d232b;
+      --shadow:0 28px 70px rgba(0,0,0,.42);
+    }
+
+    *{box-sizing:border-box}
     html,body{height:100%}
-    body{margin:0;display:grid;place-items:center;background:linear-gradient(135deg,var(--bg1),var(--bg2));font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink)}
+    body{
+      margin:0;
+      font-family:"Manrope","Segoe UI",sans-serif;
+      color:var(--ink);
+      background:var(--bg);
+      overflow:hidden;
+    }
 
-    .chat{width:min(100%,520px);height:min(90vh,720px);background:var(--panel);border-radius:16px;display:grid;grid-template-rows:auto auto 1fr auto;overflow:hidden;box-shadow:0 10px 30px rgba(0,0,0,.45)}
+    body::before,
+    body::after{
+      content:"";
+      position:fixed;
+      inset:0;
+      pointer-events:none;
+      z-index:0;
+    }
 
-    header{background:var(--header);padding:8px 12px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)}
-    header h1{margin:0;font-size:1.15rem;line-height:1.2;font-weight:700}
-    .status{width:10px;height:10px;border-radius:50%}
-    .status--connected{background:#06ff06}.status--connecting{background:#fffb4d}.status--disconnected{background:#ff3434}
+    body::before{
+      background:
+        radial-gradient(760px 360px at 8% 8%, var(--bg-shape), transparent 64%),
+        radial-gradient(720px 340px at 92% 92%, color-mix(in oklab, var(--primary) 18%, transparent), transparent 68%);
+    }
 
-    nav{display:flex;gap:8px;flex-wrap:wrap;background:var(--panel-2);border-bottom:1px solid var(--border);padding:8px 10px}
-    .qa-btn{display:flex;align-items:center;gap:8px;background:#262b33;border:1px solid #323845;padding:8px 10px;border-radius:10px;color:#e9eff2;cursor:pointer;font-size:.92rem}
-    .qa-dot{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+    body::after{
+      background-image:linear-gradient(transparent 96%, rgba(0,0,0,.03) 96%);
+      background-size:100% 4px;
+      opacity:.55;
+    }
 
-    main{display:flex;flex-direction:column;min-height:0}
-    #messages{list-style:none;margin:0;padding:14px;display:flex;flex-direction:column;gap:10px;overflow:auto;min-height:0}
-    .bubble{padding:12px 16px;border-radius:18px;line-height:1.45;font-size:.95rem;max-width:100%}
-    .bubble--user{background:#39424e;color:#fff;align-self:flex-end}
-    .bubble--ai{background:#2d313a;color:var(--ink)}
+    .app{
+      position:relative;
+      z-index:1;
+      height:100%;
+      padding:16px;
+      display:grid;
+      grid-template-columns:330px 1fr;
+      gap:14px;
+    }
 
-    form.chat__composer{background:var(--header);padding:10px 12px;border-top:1px solid var(--border);display:grid;grid-template-columns:1fr auto;gap:10px}
-    .composer__input{padding:10px 14px;border-radius:12px;background:#2a2f37;border:1px solid #3c4350;color:#e0e4ea}
-    .composer__send{width:44px;height:44px;border-radius:12px;border:1px solid #2e333c;background:#3a4150;color:#fff;cursor:pointer;display:grid;place-items:center}
+    .left{
+      border:1px solid var(--line);
+      border-radius:24px;
+      background:linear-gradient(180deg,var(--panel),var(--panel-soft));
+      box-shadow:var(--shadow);
+      display:flex;
+      flex-direction:column;
+      padding:18px 16px;
+      min-height:0;
+    }
 
-    .loader{display:flex;gap:12px;align-items:center;background:#2d313a;padding:12px 16px;border-radius:18px}
-    .loader__spinner{width:18px;height:18px;border-radius:50%;border:2px solid #818897;border-top-color:transparent;animation:spin 1s linear infinite}
-    @keyframes spin{to{transform:rotate(360deg)}}
-    .loader__content{flex:1}.loader__line{height:8px;background:#3b414d;border-radius:6px;margin:5px 0}
-    .loader__line--long{width:75%}.loader__line--med{width:55%}.loader__line--short{width:35%}
-    .loader__status{display:flex;align-items:center;gap:4px;font-size:.85rem;color:#aeb3bd}
-    .loader__dot{width:4px;height:4px;border-radius:50%;background:#aeb3bd;animation:bounce 1.3s infinite}
-    .loader__dot:nth-child(2){animation-delay:.15s}.loader__dot:nth-child(3){animation-delay:.3s}
-    @keyframes bounce{0%,80%,100%{opacity:.35;transform:translateY(0)}40%{opacity:1;transform:translateY(-3px)}}
+    .brand{
+      margin:0;
+      font-family:"Bebas Neue","Manrope",sans-serif;
+      letter-spacing:.05em;
+      font-size:3rem;
+      line-height:.86;
+      color:var(--ink);
+    }
 
-    .cards{display:grid;gap:10px}
-    .card{background:#222731;border:1px solid #313745;border-radius:14px;padding:12px}
-    .card h3{margin:0}.meta{display:flex;justify-content:space-between;flex-wrap:wrap;color:#c9ced6;font-size:.9rem}
-    .chips{display:flex;gap:6px;flex-wrap:wrap}.chip{background:#2f3542;border:1px solid #3b414d;padding:2px 8px;border-radius:999px}
-    .rating{display:flex;align-items:center;gap:10px}.stars{font-size:1.05rem}.badge{background:#26323a;border:1px solid #3b414d;padding:2px 8px;border-radius:999px;font-size:.85rem}
+    .subtitle{
+      margin:10px 0 0;
+      color:var(--ink-soft);
+      font-size:.9rem;
+      line-height:1.5;
+    }
 
-    dialog{border:none;border-radius:16px;background:#1b1f26;color:var(--ink);padding:16px;width:min(92vw,520px);max-height:78vh;overflow:auto}
-    dialog::backdrop{background:rgba(0,0,0,.45)}
-    .dialog__title{margin:0 0 6px 0;font-size:1.05rem}
-    .dialog__desc{margin:0 0 12px 0;color:#aeb3bd}
-    .field{display:grid;gap:6px;margin:10px 0}
-    .field input{padding:10px 12px;border-radius:10px;border:1px solid #323845;background:#262c36;color:#e0e4ea}
-    .dialog__actions{display:flex;gap:8px;justify-content:flex-end;margin-top:10px}
-    .btn{padding:10px 12px;border-radius:10px;border:1px solid #343a46;background:#2a303a;color:#e4e9ee;cursor:pointer}
-    .btn--primary{background:#315665;border-color:#3a6a7b}
-    .dialog__close{position:absolute;top:10px;right:10px;width:32px;height:32px;border-radius:8px;border:1px solid #3b414d;background:#2e333c;color:#fff;cursor:pointer}
+    .status{
+      margin-top:14px;
+      display:flex;
+      align-items:center;
+      gap:10px;
+      color:var(--ink-soft);
+      font-size:.8rem;
+      font-weight:700;
+      letter-spacing:.09em;
+      text-transform:uppercase;
+    }
 
-    @media (max-width:480px){ dialog{width:94vw;max-height:82vh} }
+    .dot{
+      width:10px;
+      height:10px;
+      border-radius:50%;
+      background:#ef4444;
+    }
+
+    .dot.connected{background:#22c55e}
+    .dot.connecting{background:#f59e0b}
+
+    .theme-toggle{
+      margin-top:12px;
+      height:40px;
+      border-radius:12px;
+      border:1px solid var(--line);
+      background:var(--panel);
+      color:var(--ink);
+      font:inherit;
+      font-weight:700;
+      cursor:pointer;
+    }
+
+    .quick{
+      margin-top:16px;
+      display:grid;
+      gap:8px;
+    }
+
+    .quick button{
+      text-align:left;
+      border:1px solid var(--line);
+      background:var(--panel);
+      color:var(--ink-soft);
+      border-radius:12px;
+      padding:10px 11px;
+      font:inherit;
+      cursor:pointer;
+      transition:transform .14s ease,border-color .14s ease,color .14s ease;
+    }
+
+    .quick button:hover{
+      transform:translateY(-1px);
+      border-color:var(--primary);
+      color:var(--ink);
+    }
+
+    .notes{
+      margin-top:auto;
+      border-top:1px dashed var(--line);
+      padding-top:12px;
+      color:var(--ink-soft);
+      font-size:.82rem;
+      line-height:1.55;
+    }
+
+    .chat{
+      border:1px solid var(--line);
+      border-radius:24px;
+      background:var(--panel);
+      box-shadow:var(--shadow);
+      display:grid;
+      grid-template-rows:auto 1fr auto;
+      min-height:0;
+      overflow:hidden;
+    }
+
+    .chat-head{
+      border-bottom:1px solid var(--line);
+      background:var(--panel-soft);
+      padding:12px 14px;
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+    }
+
+    .chat-head h2{
+      margin:0;
+      font-size:.95rem;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+      color:var(--ink-soft);
+    }
+
+    .chat-head small{color:var(--ink-soft)}
+
+    #messages{
+      margin:0;
+      padding:14px;
+      list-style:none;
+      overflow:auto;
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+    }
+
+    .bubble{
+      max-width:min(84%,760px);
+      border:1px solid var(--line);
+      border-radius:14px;
+      padding:11px 13px;
+      line-height:1.5;
+      font-size:.95rem;
+    }
+
+    .bubble--ai{
+      align-self:flex-start;
+      background:var(--panel-soft);
+      color:var(--ink);
+    }
+
+    .bubble--cards{
+      width:100%;
+      max-width:100%;
+      padding:10px;
+    }
+
+    .bubble--user{
+      align-self:flex-end;
+      background:var(--user);
+      color:var(--user-ink);
+      border-color:transparent;
+    }
+
+    .composer{
+      border-top:1px solid var(--line);
+      background:var(--panel-soft);
+      padding:12px;
+      display:grid;
+      gap:8px;
+    }
+
+    .chips{
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+    }
+
+    .chips button{
+      border:1px solid var(--line);
+      background:var(--chip);
+      color:var(--ink-soft);
+      border-radius:999px;
+      padding:5px 10px;
+      font:inherit;
+      font-size:.78rem;
+      cursor:pointer;
+    }
+
+    .row{
+      display:grid;
+      grid-template-columns:1fr auto;
+      gap:9px;
+    }
+
+    .row input{
+      height:46px;
+      border:1px solid var(--line);
+      border-radius:12px;
+      padding:0 12px;
+      background:var(--panel);
+      color:var(--ink);
+      font:inherit;
+    }
+
+    .row button{
+      width:120px;
+      border:0;
+      border-radius:12px;
+      background:linear-gradient(140deg,var(--primary),color-mix(in oklab,var(--primary) 62%,black 38%));
+      color:#fff;
+      font:inherit;
+      font-weight:700;
+      cursor:pointer;
+    }
+
+    .loader{
+      align-self:flex-start;
+      width:140px;
+      height:50px;
+      border:1px solid var(--line);
+      border-radius:12px;
+      background:var(--panel-soft);
+      display:grid;
+      place-content:center;
+    }
+
+    .loader i{
+      width:56px;
+      height:6px;
+      border-radius:999px;
+      display:inline-block;
+      background:linear-gradient(90deg,var(--primary),var(--secondary),var(--primary));
+      background-size:220% 100%;
+      animation:shimmer 1.1s linear infinite;
+    }
+
+    @keyframes shimmer{to{background-position:-220% 0}}
+
+    .cards{
+      display:grid;
+      gap:8px;
+      grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+      align-items:start;
+    }
+
+    .card{
+      background:var(--panel);
+      border:1px solid var(--line);
+      border-radius:12px;
+      padding:12px;
+    }
+
+    .card-top{
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:10px;
+      margin-bottom:6px;
+    }
+
+    .card h3{
+      margin:0;
+      font-size:1rem;
+    }
+
+    .card-sub{
+      margin:1px 0 0;
+      font-size:.83rem;
+      color:var(--ink-soft);
+    }
+
+    .card-rank{
+      min-width:28px;
+      height:28px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      background:var(--panel-soft);
+      display:grid;
+      place-items:center;
+      font-size:.76rem;
+      font-weight:700;
+      color:var(--ink-soft);
+    }
+
+    .card p{
+      margin:3px 0;
+      color:var(--ink-soft);
+      font-size:.85rem;
+    }
+
+    .stars{
+      font-size:.9rem;
+      font-weight:700;
+      color:var(--primary);
+      letter-spacing:.05em;
+    }
+
+    .stat-row{
+      margin-top:8px;
+      padding-top:8px;
+      border-top:1px dashed var(--line);
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:10px;
+      font-size:.83rem;
+      color:var(--ink-soft);
+    }
+
+    dialog{
+      width:min(520px,92vw);
+      border:1px solid var(--line);
+      border-radius:14px;
+      background:var(--panel);
+      color:var(--ink);
+      padding:14px;
+    }
+
+    dialog::backdrop{background:rgba(0,0,0,.35)}
+
+    .field{
+      display:grid;
+      gap:4px;
+      margin:10px 0;
+      font-size:.85rem;
+      color:var(--ink-soft);
+    }
+
+    .field input{
+      height:42px;
+      border:1px solid var(--line);
+      border-radius:10px;
+      padding:0 10px;
+      background:var(--panel-soft);
+      color:var(--ink);
+      font:inherit;
+    }
+
+    .actions{
+      margin-top:10px;
+      display:flex;
+      justify-content:flex-end;
+      gap:8px;
+    }
+
+    .actions button{
+      height:38px;
+      border-radius:10px;
+      padding:0 12px;
+      border:1px solid var(--line);
+      background:var(--panel-soft);
+      color:var(--ink);
+      font:inherit;
+      cursor:pointer;
+    }
+
+    .actions .go{
+      border:0;
+      background:var(--secondary);
+      color:#eefdfc;
+      font-weight:700;
+    }
+
+    @media (max-width:900px){
+      body{overflow:auto}
+      .app{
+        min-height:100%;
+        grid-template-columns:1fr;
+      }
+      .chat{min-height:72vh}
+      .bubble{max-width:92%}
+    }
+
+    @media (max-width:640px){
+      .cards{grid-template-columns:1fr}
+      .brand{font-size:2.4rem}
+    }
   </style>
 </head>
 <body>
-  <div class="chat" data-ws-url="">
-    <header>
-      <h1>Professor Chatbot</h1>
-      <span id="connStatus" class="status status--disconnected"></span>
-    </header>
+  <div class="app">
+    <aside class="left">
+      <h1 class="brand">Professor<br>Chat Bot</h1>
+      <p class="subtitle">A refined search studio for professor discovery with expressive visuals in both themes.</p>
+      <div class="status">
+        <span id="statusDot" class="dot"></span>
+        <span id="statusText">Disconnected</span>
+      </div>
+      <button id="themeToggle" class="theme-toggle" type="button">Switch To Dark</button>
 
-    <nav>
-      <button class="qa-btn" id="openByName"><span class="qa-dot"></span><span>Search Professor by name.</span></button>
-      <button class="qa-btn" id="openByUni"><span class="qa-dot"></span><span>Search Professor by university.</span></button>
-    </nav>
+      <div class="quick">
+        <button id="openByName">Find professor by name</button>
+        <button id="openByUni">Find professors by university</button>
+      </div>
 
-    <main>
+      <div class="notes">
+        Try prompts like:<br>
+        Find professor "John Smith" at MIT<br>
+        Top rated calculus professors at Stanford
+      </div>
+    </aside>
+
+    <section class="chat">
+      <header class="chat-head">
+        <h2>Live Session</h2>
+        <small>Streaming WebSocket</small>
+      </header>
+
       <ul id="messages">
-        <li class="bubble bubble--ai">Welcome! Choose an option above, or type a query (e.g., <em>Find professor "Todd Farchione" at Harvard</em>).</li>
+        <li class="bubble bubble--ai">Welcome. Ask about a professor, class, or university.</li>
       </ul>
-    </main>
 
-    <form id="composerForm" class="chat__composer">
-      <input id="composerInput" class="composer__input" placeholder="Type a message…" autocomplete="off" />
-      <button class="composer__send" type="submit">
-        <svg width="18" height="18" viewBox="0 0 24 24"><path d="M2,21 L23,12 L2,3 L2,10 L17,12 L2,14 Z" fill="#fff"/></svg>
-      </button>
-    </form>
+      <form id="composerForm" class="composer">
+        <div class="chips">
+          <button type="button" data-action="name">Name + University</button>
+          <button type="button" data-action="university">University Search</button>
+          <button type="button" data-action="course">Course Intent</button>
+        </div>
+        <div class="row">
+          <input id="composerInput" autocomplete="off" placeholder="Ask your question..." />
+          <button type="submit">Send</button>
+        </div>
+      </form>
+    </section>
   </div>
 
   <dialog id="dlgName">
-    <button class="dialog__close" type="button" data-close="dlgName">×</button>
-    <h2 class="dialog__title">Search Professor by Name</h2>
-    <p class="dialog__desc">Enter a professor’s name. Optionally include a university.</p>
+    <h3>Search By Name</h3>
     <form id="dlgNameForm" method="dialog">
-      <div class="field"><label for="nm_name">Professor name *</label><input id="nm_name" required /></div>
-      <div class="field"><label for="nm_school">University (optional)</label><input id="nm_school" /></div>
-      <div class="dialog__actions">
-        <button class="btn" type="button" data-close="dlgName">Cancel</button>
-        <button class="btn btn--primary" type="submit">Search</button>
+      <label class="field">Professor name
+        <input id="nm_name" required />
+      </label>
+      <label class="field">University (optional)
+        <input id="nm_school" />
+      </label>
+      <div class="actions">
+        <button type="button" data-close="dlgName">Cancel</button>
+        <button class="go" type="submit">Search</button>
       </div>
     </form>
   </dialog>
 
   <dialog id="dlgUni">
-    <button class="dialog__close" type="button" data-close="dlgUni">×</button>
-    <h2 class="dialog__title">Search Professor by University</h2>
-    <p class="dialog__desc">Enter the university. Optionally filter by a name fragment.</p>
+    <h3>Search By University</h3>
     <form id="dlgUniForm" method="dialog">
-      <div class="field"><label for="un_school">University *</label><input id="un_school" required /></div>
-      <div class="field"><label for="un_filter">Name filter (optional)</label><input id="un_filter" /></div>
-      <div class="dialog__actions">
-        <button class="btn" type="button" data-close="dlgUni">Cancel</button>
-        <button class="btn btn--primary" type="submit">Search</button>
+      <label class="field">University
+        <input id="un_school" required />
+      </label>
+      <label class="field">Name filter (optional)
+        <input id="un_filter" />
+      </label>
+      <div class="actions">
+        <button type="button" data-close="dlgUni">Cancel</button>
+        <button class="go" type="submit">Search</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlgCourse">
+    <h3>Search By Course</h3>
+    <form id="dlgCourseForm" method="dialog">
+      <label class="field">Course / subject
+        <input id="co_subject" placeholder="e.g. Calculus, Organic Chemistry" required />
+      </label>
+      <label class="field">University (optional)
+        <input id="co_school" />
+      </label>
+      <div class="actions">
+        <button type="button" data-close="dlgCourse">Cancel</button>
+        <button class="go" type="submit">Search</button>
       </div>
     </form>
   </dialog>
 
   <script>
     const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>Array.from(r.querySelectorAll(s));
-    const log=$("#messages"),form=$("#composerForm"),input=$("#composerInput"),status=$("#connStatus");
-    const dlgName=$("#dlgName"),dlgUni=$("#dlgUni"),nmName=$("#nm_name"),nmSchool=$("#nm_school"),unSchool=$("#un_school"),unFilter=$("#un_filter");
-    $("#openByName").onclick=()=>{dlgName.showModal();setTimeout(()=>nmName.focus(),0)};
-    $("#openByUni").onclick =()=>{dlgUni.showModal();setTimeout(()=>unSchool.focus(),0)};
-    $$('[data-close="dlgName"]').forEach(b=>b.onclick=()=>dlgName.close());
-    $$('[data-close="dlgUni"]').forEach(b=>b.onclick=()=>dlgUni.close());
-    [dlgName,dlgUni].forEach(d=>d.addEventListener("click",e=>{if(e.target===d)d.close()}));
+    const messages=$("#messages"),form=$("#composerForm"),input=$("#composerInput");
+    const statusDot=$("#statusDot"),statusText=$("#statusText"),themeToggle=$("#themeToggle");
+    const dlgName=$("#dlgName"),dlgUni=$("#dlgUni"),dlgCourse=$("#dlgCourse");
+    const nmName=$("#nm_name"),nmSchool=$("#nm_school"),unSchool=$("#un_school"),unFilter=$("#un_filter");
+    const coSubject=$("#co_subject"),coSchool=$("#co_school");
+    const STREAM_START="<STREAM>",STREAM_END="<END>";
 
-    function setStatus(s){status.className="status "+(s==="connected"?"status--connected":s==="connecting"?"status--connecting":"status--disconnected");}
-    function pushUser(t){const li=document.createElement("li");li.className="bubble bubble--user";li.textContent=t;log.append(li);log.scrollTop=log.scrollHeight;}
-    function pushAI(h){const li=document.createElement("li");li.className="bubble bubble--ai";li.innerHTML=h;log.append(li);log.scrollTop=log.scrollHeight;}
-    function pushLoader(){const li=document.createElement("li");li.className="loader";li.innerHTML='<div class="loader__spinner"></div><div class="loader__content"><div class="loader__line loader__line--long"></div><div class="loader__line loader__line--med"></div><div class="loader__line loader__line--short"></div><div class="loader__status"><span>Thinking</span><span class="loader__dot"></span><span class="loader__dot"></span><span class="loader__dot"></span></div></div>';log.append(li);log.scrollTop=log.scrollHeight;return li;}
-    function md(s){return String(s||"").replace(/\r/g,"").replace(/\n/g,"<br>").replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>").replace(/\*(.*?)\*/g,"<em>$1</em>");}
+    let ws=null,streaming=false,buffer="",streamNode=null,pendingNode=null;
 
-    function tryParseRMP(raw){const t=String(raw||"").trim();const re=/(?:^|\n)\s*(?:\d+\.\s*)?(?:\*\*)?([^*\n-]+?)(?:\*\*)?\s*-\s*(?:\*\*Department:\*\*|Department:)\s*([^-\n]+?)\s*-\s*(?:\*\*School:\*\*|School:)\s*([^-\n]+?)\s*-\s*(?:\*\*City:\*\*|City:)\s*([^-\n]+?)\s*-\s*(?:\*\*Average Rating:\*\*|Average Rating:)\s*([0-9.]+)\s*\((\d+)\s*ratings?\)\s*-\s*(?:\*\*Would Take Again:\*\*|Would Take Again:)\s*([0-9]{1,3}%)/gi;let m,out=[];while((m=re.exec(t))){out.push({name:m[1],department:m[2],school:m[3],city:m[4],rating:+m[5],ratingsCount:+m[6],wouldAgain:m[7]});}return out.length?out:null;}
-    function renderCards(items){const MAX=5,vis=items.slice(0,MAX),hid=items.slice(MAX);const card=it=>`<article class="card"><h3>${it.name}</h3><div class="meta"><div>${it.school} • ${it.city}</div><div class="chips"><span class="chip">${it.department}</span><span class="chip">${it.ratingsCount} ratings</span></div></div><div class="rating"><span class="stars">${"★".repeat(Math.round(it.rating))+"☆".repeat(5-Math.round(it.rating))}</span><span class="badge">Would take again: ${it.wouldAgain}</span></div></article>`;if(!hid.length)return`<div class="cards">${vis.map(card).join("")}</div>`;const id="more-"+Math.random().toString(36).slice(2,8);return`<div class="cards">${vis.map(card).join("")}</div><details id="${id}" style="margin-top:8px"><summary style="cursor:pointer">Show ${hid.length} more</summary><div class="cards">${hid.map(card).join("")}</div></details>`;}
+    function setTheme(theme){
+      const t=theme==="dark"?"dark":"light";
+      document.documentElement.setAttribute("data-theme",t);
+      localStorage.setItem("rmp-theme",t);
+      themeToggle.textContent=t==="dark"?"Switch To Light":"Switch To Dark";
+    }
 
-    let ws=null,streaming=false,buf="",node=null,pending=null;
-    const wsUrl=(location.protocol==="https:"?"wss":"ws")+"://"+location.host+"/ws";
-    function connect(){setStatus("connecting");try{ws&&ws.close()}catch{};ws=new WebSocket(wsUrl);ws.onopen=()=>setStatus("connected");ws.onerror=()=>setStatus("disconnected");ws.onclose=()=>{setStatus("disconnected");setTimeout(connect,2000)};ws.onmessage=e=>{const d=String(e.data||"").trim();if(d=="<STREAM>"){streaming=true;buf="";node=pending||pushLoader();pending=null;return}if(d=="<END>"){const p=tryParseRMP(buf.trim());node.className="bubble bubble--ai";node.innerHTML=p?renderCards(p):md(buf);streaming=false;buf="";node=null;return}if(streaming){buf+=e.data;return}if(pending){const p=tryParseRMP(d);pending.className="bubble bubble--ai";pending.innerHTML=p?renderCards(p):md(e.data);pending=null;return}const p=tryParseRMP(d);pushAI(p?renderCards(p):md(e.data));};}
-    form.addEventListener("submit",e=>{e.preventDefault();const t=input.value.trim();if(!t)return;pushUser(t);pending=pushLoader();if(ws&&ws.readyState===1)ws.send(t);else{setTimeout(()=>{if(pending){pending.className="bubble bubble--ai";pending.innerHTML="⚠️ Disconnected.";pending=null}},400);connect()}input.value=""});
-    $("#dlgNameForm").addEventListener("submit",e=>{e.preventDefault();if(!nmName.reportValidity())return;const q=nmSchool.value?`Find professor "${nmName.value}" at ${nmSchool.value}`:`Find professor "${nmName.value}"`;dlgName.close();pushUser(q);pending=pushLoader();if(ws&&ws.readyState===1)ws.send(q);else{connect()}nmName.value="";nmSchool.value=""});
-    $("#dlgUniForm").addEventListener("submit",e=>{e.preventDefault();if(!unSchool.reportValidity())return;const q=unFilter.value?`Find professors at ${unSchool.value} named ${unFilter.value}`:`Find professors at ${unSchool.value}`;dlgUni.close();pushUser(q);pending=pushLoader();if(ws&&ws.readyState===1)ws.send(q);else{connect()}unSchool.value="";unFilter.value=""});
+    function initTheme(){
+      const saved=localStorage.getItem("rmp-theme");
+      if(saved==="light"||saved==="dark"){setTheme(saved);return;}
+      const preferDark=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches;
+      setTheme(preferDark?"dark":"light");
+    }
+
+    function setStatus(mode){
+      statusDot.className="dot "+(mode||"");
+      statusText.textContent=mode==="connected"?"Connected":mode==="connecting"?"Connecting":"Disconnected";
+    }
+
+    function addMessage(text,who="ai"){
+      const li=document.createElement("li");
+      li.className="bubble bubble--"+who;
+      li.innerHTML=renderText(text);
+      messages.appendChild(li);
+      messages.scrollTop=messages.scrollHeight;
+      return li;
+    }
+
+    function addLoader(){
+      const li=document.createElement("li");
+      li.className="loader";
+      li.innerHTML="<i></i>";
+      messages.appendChild(li);
+      messages.scrollTop=messages.scrollHeight;
+      return li;
+    }
+
+    function renderText(text){
+      const cleaned=String(text||"")
+        .replace(/\*\*(.*?)\*\*/g,"$1")
+        .replace(/__(.*?)__/g,"$1")
+        .replace(/\*(.*?)\*/g,"$1")
+        .replace(/`([^`]+)`/g,"$1");
+      return cleaned
+        .replace(/&/g,"&amp;")
+        .replace(/</g,"&lt;")
+        .replace(/>/g,"&gt;")
+        .replace(/\n/g,"<br>");
+    }
+
+    function extractField(body, labels){
+      const lines=String(body||"").split(/\r?\n/);
+      const normalized=Array.isArray(labels)?labels:[labels];
+      for(const line of lines){
+        const clean=line.trim();
+        for(const label of normalized){
+          const re=new RegExp(`^[-*]\\s+\\*{0,2}\\s*${label}\\s*:\\s*\\*{0,2}\\s*(.+)$`,"i");
+          const m=clean.match(re);
+          if(m&&m[1]) return m[1].trim().replace(/^\*+|\*+$/g,"").trim();
+        }
+      }
+      return "";
+    }
+
+    function parseMarkdownProfessorList(raw){
+      const text=String(raw||"");
+      const blockRe=/(?:^|\n)\s*(\d+)\.\s+\*\*([^\n*]+)\*\*\s*\n([\s\S]*?)(?=(?:\n\s*\d+\.\s+\*\*|$))/g;
+      const items=[];
+      let m;
+      while((m=blockRe.exec(text))){
+        const rank=Number(m[1]||0);
+        const name=(m[2]||"").trim();
+        const body=m[3]||"";
+        const department=extractField(body,"Department");
+        const school=extractField(body,["University","School","College"]);
+        const city=extractField(body,"City");
+        const avgRaw=extractField(body,["Average Rating","Rating"]);
+        const again=extractField(body,["Would Take Again","Take Again"]);
+        const ratingNumMatch=avgRaw.match(/([0-9]+(?:\.[0-9]+)?)/);
+        const rating=ratingNumMatch?Number(ratingNumMatch[1]):null;
+        const ratingsCountMatch=avgRaw.match(/(\d+)\s*ratings?/i);
+        const ratings=ratingsCountMatch?ratingsCountMatch[1]:"";
+        items.push({
+          rank,
+          name,
+          department:department||"Not available",
+          school:school||"Not available",
+          city:city||"Not available",
+          rating,
+          ratings,
+          avgRaw:avgRaw||"Not available",
+          again:again||"Not available"
+        });
+      }
+      return items.length?items:null;
+    }
+
+    function parseInlineProfessorList(raw){
+      const text=String(raw||"").trim();
+      const re=/(?:^|\n)\s*(?:\d+\.\s*)?(?:\*\*)?([^*\n-]+?)(?:\*\*)?\s*-\s*(?:\*\*Department:\*\*|Department:)\s*([^-\n]+?)\s*-\s*(?:\*\*School:\*\*|School:)\s*([^-\n]+?)\s*-\s*(?:\*\*City:\*\*|City:)\s*([^-\n]+?)\s*-\s*(?:\*\*Average Rating:\*\*|Average Rating:)\s*([^-\n]+?)\s*-\s*(?:\*\*Would Take Again:\*\*|Would Take Again:)\s*([0-9]{1,3}%|Not available)/gi;
+      const items=[];
+      let m;
+      let rank=1;
+      while((m=re.exec(text))){
+        const avgRaw=(m[5]||"").trim();
+        const ratingNumMatch=avgRaw.match(/([0-9]+(?:\.[0-9]+)?)/);
+        const ratingsCountMatch=avgRaw.match(/(\d+)\s*ratings?/i);
+        items.push({
+          rank:rank++,
+          name:m[1].trim(),
+          department:m[2].trim(),
+          school:m[3].trim(),
+          city:m[4].trim(),
+          rating:ratingNumMatch?Number(ratingNumMatch[1]):null,
+          ratings:ratingsCountMatch?ratingsCountMatch[1]:"",
+          avgRaw:avgRaw||"Not available",
+          again:(m[6]||"Not available").trim()
+        });
+      }
+      return items.length?items:null;
+    }
+
+    function toStars(rating){
+      if(!Number.isFinite(rating))return "N/A";
+      const rounded=Math.max(0,Math.min(5,Math.round(rating)));
+      return "★".repeat(rounded)+"☆".repeat(5-rounded);
+    }
+
+    function cardsHtml(items){
+      const shown=items.slice(0,5);
+      return `<div class="cards">${shown.map(i=>`
+        <article class="card">
+          <div class="card-top">
+            <div>
+              <h3>${renderText(i.name)}</h3>
+              <p class="card-sub">${renderText(i.department)}</p>
+            </div>
+            <div class="card-rank">#${i.rank||""}</div>
+          </div>
+          <p>${renderText(i.school)} | ${renderText(i.city)}</p>
+          <div class="stat-row">
+            <span class="stars">${toStars(i.rating)}</span>
+            <span>${Number.isFinite(i.rating)?`${i.rating.toFixed(1)}/5`:renderText(i.avgRaw)}${i.ratings?` (${renderText(i.ratings)} ratings)`:""}</span>
+          </div>
+          <p>Would take again: ${renderText(i.again)}</p>
+        </article>
+      `).join("")}</div>`;
+    }
+
+    function renderNode(node,text){
+      const cards=parseMarkdownProfessorList(text)||parseInlineProfessorList(text);
+      node.className=cards?"bubble bubble--ai bubble--cards":"bubble bubble--ai";
+      node.innerHTML=cards?cardsHtml(cards):renderText(text);
+    }
+
+    function connect(){
+      setStatus("connecting");
+      const wsUrl=(location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws";
+      try{if(ws)ws.close();}catch(_){}
+      ws=new WebSocket(wsUrl);
+
+      ws.onopen=()=>setStatus("connected");
+      ws.onerror=()=>setStatus("disconnected");
+      ws.onclose=()=>{setStatus("disconnected");setTimeout(connect,2000);};
+
+      ws.onmessage=(event)=>{
+        const raw=String(event.data??"");
+        const t=raw.trim();
+
+        if(t===STREAM_START){
+          streaming=true;
+          buffer="";
+          streamNode=pendingNode||addLoader();
+          pendingNode=null;
+          return;
+        }
+
+        if(t===STREAM_END){
+          if(streamNode)renderNode(streamNode,buffer);
+          streaming=false;
+          buffer="";
+          streamNode=null;
+          return;
+        }
+
+        if(streaming){
+          buffer+=raw;
+          return;
+        }
+
+        if(pendingNode){
+          renderNode(pendingNode,raw);
+          pendingNode=null;
+          return;
+        }
+
+        addMessage(raw,"ai");
+      };
+    }
+
+    function sendQuery(text){
+      const q=String(text||"").trim();
+      if(!q)return;
+      addMessage(q,"user");
+      pendingNode=addLoader();
+
+      if(ws&&ws.readyState===WebSocket.OPEN){
+        ws.send(q);
+      }else{
+        connect();
+        setTimeout(()=>{
+          if(ws&&ws.readyState===WebSocket.OPEN)ws.send(q);
+          else if(pendingNode){
+            renderNode(pendingNode,"Disconnected from server.");
+            pendingNode=null;
+          }
+        },320);
+      }
+    }
+
+    themeToggle.addEventListener("click",()=>{
+      const now=document.documentElement.getAttribute("data-theme")==="dark"?"dark":"light";
+      setTheme(now==="dark"?"light":"dark");
+    });
+
+    $("#openByName").addEventListener("click",()=>{dlgName.showModal();setTimeout(()=>nmName.focus(),0);});
+    $("#openByUni").addEventListener("click",()=>{dlgUni.showModal();setTimeout(()=>unSchool.focus(),0);});
+    $$("[data-close]").forEach(btn=>btn.addEventListener("click",()=>{
+      const id=btn.getAttribute("data-close");
+      const dlg=id?document.getElementById(id):null;
+      if(dlg)dlg.close();
+    }));
+
+    [dlgName,dlgUni,dlgCourse].forEach(dlg=>dlg.addEventListener("click",(e)=>{if(e.target===dlg)dlg.close();}));
+
+    form.addEventListener("submit",(e)=>{e.preventDefault();sendQuery(input.value);input.value="";});
+    $$(".chips button").forEach(btn=>btn.addEventListener("click",()=>{
+      const action=btn.dataset.action;
+      if(action==="name"){dlgName.showModal();setTimeout(()=>nmName.focus(),0);return;}
+      if(action==="university"){dlgUni.showModal();setTimeout(()=>unSchool.focus(),0);return;}
+      if(action==="course"){dlgCourse.showModal();setTimeout(()=>coSubject.focus(),0);return;}
+    }));
+
+    $("#dlgNameForm").addEventListener("submit",(e)=>{
+      e.preventDefault();
+      if(!nmName.reportValidity())return;
+      const q=nmSchool.value?`Find professor "${nmName.value}" at ${nmSchool.value}`:`Find professor "${nmName.value}"`;
+      dlgName.close();
+      sendQuery(q);
+      nmName.value="";
+      nmSchool.value="";
+    });
+
+    $("#dlgUniForm").addEventListener("submit",(e)=>{
+      e.preventDefault();
+      if(!unSchool.reportValidity())return;
+      const q=unFilter.value?`Find professors at ${unSchool.value} named ${unFilter.value}`:`Find professors at ${unSchool.value}`;
+      dlgUni.close();
+      sendQuery(q);
+      unSchool.value="";
+      unFilter.value="";
+    });
+
+    $("#dlgCourseForm").addEventListener("submit",(e)=>{
+      e.preventDefault();
+      if(!coSubject.reportValidity())return;
+      const q=coSchool.value
+        ? `Best rated ${coSubject.value} professors at ${coSchool.value}`
+        : `Best rated ${coSubject.value} professors`;
+      dlgCourse.close();
+      sendQuery(q);
+      coSubject.value="";
+      coSchool.value="";
+    });
+
+    initTheme();
     connect();
   </script>
 </body>
