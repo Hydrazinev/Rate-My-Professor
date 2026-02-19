@@ -14,12 +14,15 @@ from typing import Any, Dict, List, Optional, TypedDict
 
 import json
 import os
+import re
+from html import unescape as html_unescape
 
 import requests
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 from langchain_core.tools import StructuredTool
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from langchain import hub
 from langchain.agents import AgentExecutor, create_tool_calling_agent
@@ -43,6 +46,10 @@ _AUTH_SCHEME: str = (os.getenv("RMP_AUTH_SCHEME") or "Bearer").strip()
 
 # Optional cookie (helpful sometimes). Provide only the JWT value from the rmpAuth cookie.
 _RMP_COOKIE: str = (os.getenv("RMP_RMPAUTH_COOKIE") or "").strip()
+
+# Use a session that ignores system proxy env; local bad proxies can break requests.
+_HTTP = requests.Session()
+_HTTP.trust_env = False
 
 
 # =============================================================================
@@ -175,7 +182,7 @@ def send_graphql_request(
     """
     payload: GraphQLPayload = {"query": query, "variables": variables or {}}
     try:
-        resp = requests.post(
+        resp = _HTTP.post(
             BASE_URL,
             headers=_default_headers(),
             data=json.dumps(payload),
@@ -263,6 +270,72 @@ def format_professor_response(response: JSON, limit: int) -> List[JSON]:
     return out
 
 
+def _extract_comments_from_professor_page(page_html: str, limit: int = 3) -> List[str]:
+    """
+    Extract rating comments from the public professor page HTML.
+
+    This is intentionally best-effort because the page structure can change.
+    """
+    if not page_html:
+        return []
+
+    # Pull comment text from JSON blobs embedded in the page.
+    # Keep multiple patterns because frontend payload keys can vary.
+    patterns = [
+        r'"comment":"((?:\\.|[^"\\])*)"',
+        r'"teacherComment":"((?:\\.|[^"\\])*)"',
+        r'"rComments":"((?:\\.|[^"\\])*)"',
+    ]
+
+    raw_comments: List[str] = []
+    for pat in patterns:
+        raw_comments.extend(re.findall(pat, page_html))
+    cleaned: List[str] = []
+    seen: set[str] = set()
+
+    for raw in raw_comments:
+        txt = raw.encode("utf-8").decode("unicode_escape")
+        txt = html_unescape(txt)
+        txt = txt.replace("\\n", " ").replace("\\r", " ").strip()
+        txt = re.sub(r"\s+", " ", txt)
+        if len(txt) < 8:
+            continue
+        if txt.lower() in seen:
+            continue
+        seen.add(txt.lower())
+        cleaned.append(txt)
+        if len(cleaned) >= limit:
+            break
+
+    return cleaned
+
+
+def get_professor_comments_by_legacy_id(legacy_id: Any, limit: int = 3) -> List[str]:
+    """
+    Scrape recent student comments from the public professor page.
+    Returns [] on any failure.
+    """
+    if not legacy_id:
+        return []
+    try:
+        url = f"https://www.ratemyprofessors.com/professor/{legacy_id}"
+        resp = _HTTP.get(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/127.0.0.0 Safari/537.36"
+                )
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return _extract_comments_from_professor_page(resp.text, limit=limit)
+    except Exception:
+        return []
+
+
 # =============================================================================
 # Public search functions (stable external API)
 # =============================================================================
@@ -274,7 +347,10 @@ def get_professor(name: str, limit: int = 5) -> List[JSON]:
     query = load_query_from_file("search_professor_by_name")
     variables = {"query": {"text": name}, "count": limit}
     resp = send_graphql_request(query, variables)
-    return format_professor_response(resp, limit)
+    out = format_professor_response(resp, limit)
+    for row in out:
+        row["comments"] = get_professor_comments_by_legacy_id(row.get("legacyId"), limit=3)
+    return out
 
 
 def get_university(university: str, limit: int = 5) -> List[JSON]:
@@ -296,7 +372,10 @@ def get_professors_by_university_id(
     query = load_query_from_file("search_teachers_by_school_id")
     variables = {"query": {"text": professor_name, "schoolID": school_id}, "count": limit}
     resp = send_graphql_request(query, variables)
-    return format_professor_response(resp, limit)
+    out = format_professor_response(resp, limit)
+    for row in out:
+        row["comments"] = get_professor_comments_by_legacy_id(row.get("legacyId"), limit=3)
+    return out
 
 
 # =============================================================================
@@ -343,7 +422,20 @@ rate_tools = [
 # Small, general-purpose agent that can decide which tool to call.
 # NOTE: Keeping import-time construction to preserve current behavior.
 _llm = ChatOpenAI(model="gpt-4o-mini")
-_prompt = hub.pull("hwchase17/openai-tools-agent")
+try:
+    _prompt = hub.pull("hwchase17/openai-tools-agent")
+except Exception:
+    # Fallback prompt for offline/local environments where LangSmith hub is unreachable.
+    _prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                "You are a helpful professor search assistant. Use tools to find accurate professor and university data.",
+            ),
+            ("human", "{input}"),
+            ("placeholder", "{agent_scratchpad}"),
+        ]
+    )
 _agent = create_tool_calling_agent(llm=_llm, tools=rate_tools, prompt=_prompt)
 agent_executor = AgentExecutor.from_agent_and_tools(
     agent=_agent,
@@ -358,7 +450,37 @@ def run_tools(input: str, chat_history: List[Any]) -> str:
     Run the tools using a simple tool-calling agent. Returns a text answer.
     """
     out = agent_executor.invoke({"input": input, "chat_history": chat_history})
-    return out.get("output", "")
+    text = out.get("output", "") or ""
+
+    # If the agent did not include comments, enrich known professor names with comments.
+    if "comment" not in text.lower():
+        name_matches = re.findall(r"(?:^|\n)\s*\d+\.\s+\*\*([^*\n]+)\*\*", text)
+        # Defensive fallback: grab title-case names after "Professor" labels.
+        if not name_matches:
+            name_matches = re.findall(r"\b(?:Professor|Dr\.?)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})", text)
+
+        blocks: List[str] = []
+        seen: set[str] = set()
+        for name in name_matches[:4]:
+            n = name.strip()
+            if not n or n.lower() in seen:
+                continue
+            seen.add(n.lower())
+            rows = get_professor(n, limit=1)
+            if not rows:
+                continue
+            comments = rows[0].get("comments") or []
+            comments = [c for c in comments if isinstance(c, str) and c.strip()][:3]
+            if comments:
+                block = [f"Student comments for {n}:"]
+                for c in comments:
+                    block.append(f"- {c}")
+                blocks.append("\n".join(block))
+
+        if blocks:
+            text = text.rstrip() + "\n\n" + "\n\n".join(blocks)
+
+    return text
 
 
 # =============================================================================
