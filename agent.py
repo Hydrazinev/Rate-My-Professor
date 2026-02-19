@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from rag import RAG
-from tools.ratemyprofessor import run_tools as rmp_run
+from tools.ratemyprofessor import run_tools as rmp_run, get_professor as rmp_get_professor
 
 logger = logging.getLogger(__name__)
 
@@ -303,6 +303,99 @@ class ProfessorRaterAgent:
             f"{self._config.out_of_scope_hint}"
         )
 
+    def _extract_professor_names_for_comments(self, answer: str, user_input: str) -> list[str]:
+        names: list[str] = []
+
+        # 1) Numbered markdown: 1. **Dr. Jane Doe**
+        names.extend(re.findall(r"(?:^|\n)\s*\d+\.\s+\*\*([^*\n]+)\*\*", answer))
+
+        # 2) Narrative: found a professor named X:
+        names.extend(re.findall(r"found\s+a\s+professor\s+named\s+([^\n:]+)", answer, flags=re.IGNORECASE))
+        names.extend(re.findall(r"found\s+(?:dr\.?|professor)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})", answer, flags=re.IGNORECASE))
+        names.extend(re.findall(r"details\s+for\s+professor\s+([^\n:]+)", answer, flags=re.IGNORECASE))
+
+        # 3) Bullet field: - Name: X or - **Name:** X
+        names.extend(
+            re.findall(
+                r"^\s*[-*]\s+\*{0,2}\s*Name\s*\*{0,2}\s*:\s*(.+)$",
+                answer,
+                flags=re.IGNORECASE | re.MULTILINE,
+            )
+        )
+
+        # 4) Standalone titled lines
+        names.extend(
+            re.findall(
+                r"^\s*((?:Dr\.?|Professor)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\s*$",
+                answer,
+                flags=re.MULTILINE,
+            )
+        )
+
+        # 5) Fallback from user query
+        names.extend(re.findall(r'professor\s+"([^"]+)"', user_input, flags=re.IGNORECASE))
+        names.extend(
+            re.findall(
+                r"(?:professor|dr\.?)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})",
+                user_input,
+                flags=re.IGNORECASE,
+            )
+        )
+
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for n in names:
+            name = re.sub(r"\s+", " ", (n or "").strip().strip("-").strip())
+            name = re.sub(r"^(?:Name\s*:\s*)", "", name, flags=re.IGNORECASE).strip()
+            # Trim sentence tails/noise.
+            name = re.split(r"\s*(?:\.|,|;|\(|-)\s*", name, maxsplit=1)[0].strip()
+            name = re.sub(r"\s+here\s+are.*$", "", name, flags=re.IGNORECASE).strip()
+            name = re.sub(r"\s+at\s+[A-Z].*$", "", name).strip()
+            if not name:
+                continue
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(name)
+        return cleaned
+
+    def _append_comments_if_missing(self, answer: str, user_input: str) -> str:
+        if not isinstance(answer, str) or not answer.strip():
+            return answer
+        # Skip only if a real comment block already exists.
+        if re.search(r"comments?\s+from\s+students?\s*:|student\s+comments?\s+for\s+[^:\n]+\s*:", answer, re.IGNORECASE):
+            return answer
+
+        blocks: list[str] = []
+        for name in self._extract_professor_names_for_comments(answer, user_input)[:4]:
+            try:
+                rows = rmp_get_professor(name, limit=1)
+            except Exception:
+                rows = []
+            if not rows:
+                continue
+
+            comments = rows[0].get("comments") or []
+            comments = [c for c in comments if isinstance(c, str) and c.strip()][:3]
+            if not comments:
+                continue
+
+            block = [f"Student comments for {name}:"]
+            for c in comments:
+                block.append(f"- {c}")
+            blocks.append("\n".join(block))
+
+        if not blocks:
+            return answer
+        cleaned = re.sub(
+            r"(?im)^.*(?:don['’]t\s+have|do\s+not\s+have|unfortunately[^.\n]*|not\s+available[^.\n]*).*(?:comment|comments)[^.\n]*\.?\s*$",
+            "",
+            answer,
+        ).strip()
+        base = cleaned or answer.strip()
+        return base.rstrip() + "\n\n" + "\n\n".join(blocks)
+
     def _pinecone_first_then_rmp(
         self,
         user_input: str,
@@ -340,7 +433,8 @@ class ProfessorRaterAgent:
         found_professors = self.NO_PROFESSOR_MARKER not in answer
         
         if found_professors:
-            return ChatResponse(answer=answer, found_professors=True)
+            enriched = self._append_comments_if_missing(answer, user_input)
+            return ChatResponse(answer=enriched, found_professors=True)
 
         # 2) Fallback: RateMyProfessors
         try:

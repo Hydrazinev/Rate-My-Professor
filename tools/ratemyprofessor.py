@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TypedDict
 
+import base64
 import json
 import os
 import re
@@ -310,11 +311,82 @@ def _extract_comments_from_professor_page(page_html: str, limit: int = 3) -> Lis
     return cleaned
 
 
-def get_professor_comments_by_legacy_id(legacy_id: Any, limit: int = 3) -> List[str]:
+def _teacher_id_from_legacy_id(legacy_id: Any) -> str:
+    """Convert legacy numeric ID to GraphQL Teacher node ID."""
+    try:
+        raw = f"Teacher-{int(legacy_id)}".encode("utf-8")
+    except Exception:
+        return ""
+    return base64.b64encode(raw).decode("utf-8")
+
+
+def get_professor_comments_by_teacher_id(teacher_id: Any, limit: int = 3) -> List[str]:
     """
-    Scrape recent student comments from the public professor page.
+    Fetch recent student comments directly from GraphQL Teacher.ratings.
     Returns [] on any failure.
     """
+    if not teacher_id:
+        return []
+    query = """
+    query TeacherComments($id: ID!, $count: Int!) {
+      node(id: $id) {
+        __typename
+        ... on Teacher {
+          ratings(first: $count) {
+            edges {
+              node {
+                comment
+                class
+                date
+                qualityRating
+              }
+            }
+          }
+        }
+      }
+    }
+    """
+    resp = send_graphql_request(query, {"id": str(teacher_id), "count": int(max(1, limit))})
+    if not isinstance(resp, dict) or "error" in resp:
+        return []
+
+    edges = (
+        resp.get("data", {})
+        .get("node", {})
+        .get("ratings", {})
+        .get("edges", [])
+        or []
+    )
+    comments: List[str] = []
+    seen: set[str] = set()
+    for edge in edges:
+        node = (edge or {}).get("node", {}) or {}
+        txt = (node.get("comment") or "").strip()
+        if not txt:
+            continue
+        norm = re.sub(r"\s+", " ", txt).strip()
+        if len(norm) < 8:
+            continue
+        key = norm.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        comments.append(norm)
+        if len(comments) >= limit:
+            break
+    return comments
+
+
+def get_professor_comments_by_legacy_id(legacy_id: Any, limit: int = 3) -> List[str]:
+    """
+    Compatibility helper. Prefer GraphQL comments by teacher ID.
+    Returns [] on any failure.
+    """
+    teacher_id = _teacher_id_from_legacy_id(legacy_id)
+    comments = get_professor_comments_by_teacher_id(teacher_id, limit=limit)
+    if comments:
+        return comments
+    # Fallback to legacy HTML scraping only if GraphQL fails.
     if not legacy_id:
         return []
     try:
@@ -330,10 +402,11 @@ def get_professor_comments_by_legacy_id(legacy_id: Any, limit: int = 3) -> List[
             },
             timeout=15,
         )
-        resp.raise_for_status()
-        return _extract_comments_from_professor_page(resp.text, limit=limit)
+        if resp.ok:
+            return _extract_comments_from_professor_page(resp.text, limit=limit)
     except Exception:
-        return []
+        pass
+    return []
 
 
 # =============================================================================
@@ -345,11 +418,38 @@ def get_professor(name: str, limit: int = 5) -> List[JSON]:
     Search professors by free-text name.
     """
     query = load_query_from_file("search_professor_by_name")
-    variables = {"query": {"text": name}, "count": limit}
+    # Pull a wider candidate set, then rank locally for better name precision.
+    fetch_count = max(int(limit), 10)
+    variables = {"query": {"text": name}, "count": fetch_count}
     resp = send_graphql_request(query, variables)
-    out = format_professor_response(resp, limit)
+    out = format_professor_response(resp, fetch_count)
+
+    q = " ".join((name or "").strip().lower().split())
+    q_tokens = [t for t in re.findall(r"[a-z]+", q) if t]
+
+    def _score(row: JSON) -> tuple[int, int, float]:
+        first = str(row.get("firstName") or "").strip().lower()
+        last = str(row.get("lastName") or "").strip().lower()
+        full = " ".join([first, last]).strip()
+
+        score = 0
+        if q and full == q:
+            score += 1000
+        if q and q in full:
+            score += 200
+        if q_tokens:
+            score += 60 * sum(1 for t in q_tokens if t == first or t == last)
+            score += 20 * sum(1 for t in q_tokens if t in full)
+        # Prefer rows with more ratings when textual score ties.
+        num_ratings = int(row.get("numRatings") or 0)
+        avg = float(row.get("avgRating") or 0.0)
+        return (score, num_ratings, avg)
+
+    out = sorted(out, key=_score, reverse=True)[: int(limit)]
     for row in out:
-        row["comments"] = get_professor_comments_by_legacy_id(row.get("legacyId"), limit=3)
+        row["comments"] = get_professor_comments_by_teacher_id(row.get("id"), limit=3)
+        if not row["comments"]:
+            row["comments"] = get_professor_comments_by_legacy_id(row.get("legacyId"), limit=3)
     return out
 
 
@@ -374,7 +474,9 @@ def get_professors_by_university_id(
     resp = send_graphql_request(query, variables)
     out = format_professor_response(resp, limit)
     for row in out:
-        row["comments"] = get_professor_comments_by_legacy_id(row.get("legacyId"), limit=3)
+        row["comments"] = get_professor_comments_by_teacher_id(row.get("id"), limit=3)
+        if not row["comments"]:
+            row["comments"] = get_professor_comments_by_legacy_id(row.get("legacyId"), limit=3)
     return out
 
 
@@ -452,12 +554,69 @@ def run_tools(input: str, chat_history: List[Any]) -> str:
     out = agent_executor.invoke({"input": input, "chat_history": chat_history})
     text = out.get("output", "") or ""
 
+    def _extract_professor_names(output_text: str, query_text: str) -> List[str]:
+        names: List[str] = []
+
+        # 1) Numbered markdown list: 1. **Dr. Jane Doe**
+        names.extend(re.findall(r"(?:^|\n)\s*\d+\.\s+\*\*([^*\n]+)\*\*", output_text))
+
+        # 2) Narrative: "found a professor named Dr. Jane Doe:"
+        names.extend(re.findall(r"found\s+a\s+professor\s+named\s+([^\n:]+)", output_text, flags=re.IGNORECASE))
+        names.extend(re.findall(r"found\s+(?:dr\.?|professor)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})", output_text, flags=re.IGNORECASE))
+        names.extend(re.findall(r"details\s+for\s+professor\s+([^\n:]+)", output_text, flags=re.IGNORECASE))
+
+        # 3) Bullet fields: - Name: Jane Doe or - **Name:** Jane Doe
+        names.extend(
+            re.findall(
+                r"^\s*[-*]\s+\*{0,2}\s*Name\s*\*{0,2}\s*:\s*(.+)$",
+                output_text,
+                flags=re.IGNORECASE | re.MULTILINE,
+            )
+        )
+
+        # 4) Standalone lines containing a professor title.
+        names.extend(
+            re.findall(
+                r"^\s*((?:Dr\.?|Professor)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\s*$",
+                output_text,
+                flags=re.MULTILINE,
+            )
+        )
+
+        # 5) Fallback from query itself: professor "Name" / professor Name
+        quoted = re.findall(r'professor\s+"([^"]+)"', query_text, flags=re.IGNORECASE)
+        names.extend(quoted)
+        plain = re.findall(
+            r"(?:professor|dr\.?)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})",
+            query_text,
+            flags=re.IGNORECASE,
+        )
+        names.extend(plain)
+
+        cleaned: List[str] = []
+        seen: set[str] = set()
+        for n in names:
+            name = re.sub(r"\s+", " ", (n or "").strip().strip("-").strip())
+            name = re.sub(r"^(?:Name\s*:\s*)", "", name, flags=re.IGNORECASE).strip()
+            # Trim sentence tails/noise.
+            name = re.split(r"\s*(?:\.|,|;|\(|-)\s*", name, maxsplit=1)[0].strip()
+            name = re.sub(r"\s+here\s+are.*$", "", name, flags=re.IGNORECASE).strip()
+            name = re.sub(r"\s+at\s+[A-Z].*$", "", name).strip()
+            if not name:
+                continue
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(name)
+        return cleaned
+
     # If the agent did not include comments, enrich known professor names with comments.
-    if "comment" not in text.lower():
-        name_matches = re.findall(r"(?:^|\n)\s*\d+\.\s+\*\*([^*\n]+)\*\*", text)
-        # Defensive fallback: grab title-case names after "Professor" labels.
-        if not name_matches:
-            name_matches = re.findall(r"\b(?:Professor|Dr\.?)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})", text)
+    has_comment_block = bool(
+        re.search(r"comments?\s+from\s+students?\s*:|student\s+comments?\s+for\s+[^:\n]+\s*:", text, re.IGNORECASE)
+    )
+    if not has_comment_block:
+        name_matches = _extract_professor_names(text, input)
 
         blocks: List[str] = []
         seen: set[str] = set()
@@ -478,7 +637,13 @@ def run_tools(input: str, chat_history: List[Any]) -> str:
                 blocks.append("\n".join(block))
 
         if blocks:
-            text = text.rstrip() + "\n\n" + "\n\n".join(blocks)
+            cleaned = re.sub(
+                r"(?im)^.*(?:don['’]t\s+have|do\s+not\s+have|unfortunately[^.\n]*|not\s+available[^.\n]*).*(?:comment|comments)[^.\n]*\.?\s*$",
+                "",
+                text,
+            ).strip()
+            base = cleaned or text.strip()
+            text = base.rstrip() + "\n\n" + "\n\n".join(blocks)
 
     return text
 

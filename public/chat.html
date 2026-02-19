@@ -512,7 +512,7 @@
 
       <div class="notes">
         Try prompts like:<br>
-        Find professor "John Smith" at MIT<br>
+        Find professor "Todd Ebert" at California State University, Long Beach<br>
         Top rated calculus professors at Stanford
       </div>
     </aside>
@@ -668,6 +668,7 @@
       const text=String(raw||"");
       const blockRe=/(?:^|\n)\s*(\d+)\.\s+\*\*([^\n*]+)\*\*\s*\n([\s\S]*?)(?=(?:\n\s*\d+\.\s+\*\*|$))/g;
       const items=[];
+      let foundStructuredField = false;
       let m;
       while((m=blockRe.exec(text))){
         const rank=Number(m[1]||0);
@@ -678,6 +679,9 @@
         const city=extractField(body,"City");
         const avgRaw=extractField(body,["Average Rating","Rating"]);
         const again=extractField(body,["Would Take Again","Take Again"]);
+        if (department || school || city || avgRaw || again) {
+          foundStructuredField = true;
+        }
         const ratingNumMatch=avgRaw.match(/([0-9]+(?:\.[0-9]+)?)/);
         const rating=ratingNumMatch?Number(ratingNumMatch[1]):null;
         const ratingsCountMatch=avgRaw.match(/(\d+)\s*ratings?/i);
@@ -694,6 +698,8 @@
           again:again||"Not available"
         });
       }
+      // Avoid rendering empty placeholder cards when source only contains names.
+      if (!foundStructuredField) return null;
       return items.length?items:null;
     }
 
@@ -760,27 +766,84 @@
       }];
     }
 
+    function parseFoundProfessorBulletDetails(raw){
+      const text=String(raw||"");
+      const nameMatch=text.match(/found\s+a\s+professor\s+named\s+(.+?)\s*:/i);
+      if(!nameMatch) return null;
+
+      const esc=(s)=>String(s).replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+      const field=(labels)=>{
+        const arr=Array.isArray(labels)?labels:[labels];
+        for(const label of arr){
+          const m=text.match(new RegExp(`^\\s*[-*]\\s*\\*{0,2}\\s*${esc(label)}\\s*\\*{0,2}\\s*:\\s*(.+)$`,"im"));
+          if(m&&m[1]) return m[1].trim();
+        }
+        return "";
+      };
+
+      const name=nameMatch[1].trim().replace(/\*+/g,"");
+      const department=field("Department");
+      const school=field(["University","School","College"]);
+      const city=field(["City","Location"]);
+      const avgRaw=field(["Average Rating","Rating"]);
+      const ratingsMatch=avgRaw.match(/(\d+)\s*ratings?/i);
+      const ratingMatch=avgRaw.match(/([0-9]+(?:\.[0-9]+)?)/);
+      const again=field(["Would Take Again","Would Take Again Percentage","Take Again"]);
+
+      return [{
+        rank:1,
+        name:name||"Not available",
+        department:department||"Not available",
+        school:school||"Not available",
+        city:city||"Not available",
+        rating:ratingMatch?Number(ratingMatch[1]):null,
+        ratings:ratingsMatch?ratingsMatch[1]:"",
+        avgRaw:avgRaw||"Not available",
+        again:again||"Not available"
+      }];
+    }
+
     function parseStudentCommentsList(raw){
       const text=String(raw||"");
-      if(!/comments?\s+from\s+students?/i.test(text)) return null;
-      const section=text.split(/comments?\s+from\s+students?\s*:/i)[1]||"";
-      const re=/(?:^|\n)\s*(\d+)\.\s*(?:"|“)?([\s\S]*?)(?=(?:\n\s*\d+\.\s)|$)/g;
+      if(!/(comments?\s+from\s+students?|student\s+comments?\s+for)/i.test(text)) return null;
+
+      let section="";
+      if(/comments?\s+from\s+students?/i.test(text)){
+        section=text.split(/comments?\s+from\s+students?\s*:/i)[1]||"";
+      }else{
+        section=text.split(/student\s+comments?\s+for[^\n:]*:/i)[1]||"";
+      }
+
       const out=[];
-      let m;
-      while((m=re.exec(section))){
-        const idx=Number(m[1]||0);
-        let body=(m[2]||"").trim();
-        body=body.replace(/^\*+|\*+$/g,"").trim();
-        body=body.replace(/^["“]|["”]$/g,"").trim();
-        if(!body) continue;
-        out.push({index:idx||out.length+1,text:body});
+      const lines=section.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+      for(const line of lines){
+        // Numbered comments: 1. "...."
+        let m=line.match(/^(\d+)\.\s*(.+)$/);
+        if(m){
+          let body=(m[2]||"").trim();
+          body=body.replace(/^\*+|\*+$/g,"").trim();
+          body=body.replace(/^["“]|["”]$/g,"").trim();
+          if(body) out.push({index:Number(m[1])||out.length+1,text:body});
+          continue;
+        }
+        // Bullet comments: - "...." or * ....
+        m=line.match(/^[-*]\s+(.+)$/);
+        if(m){
+          let body=(m[1]||"").trim();
+          body=body.replace(/^\*+|\*+$/g,"").trim();
+          body=body.replace(/^["“]|["”]$/g,"").trim();
+          if(body) out.push({index:out.length+1,text:body});
+        }
       }
       return out.length?out:null;
     }
 
     function stripCommentsSection(raw){
       const text=String(raw||"");
-      return text.replace(/\n*\s*#{0,3}\s*comments?\s+from\s+students?\s*:[\s\S]*$/i,"").trim();
+      return text
+        .replace(/\n*\s*#{0,3}\s*comments?\s+from\s+students?\s*:[\s\S]*$/i,"")
+        .replace(/\n*\s*student\s+comments?\s+for[^\n:]*:[\s\S]*$/i,"")
+        .trim();
     }
 
     function toStars(rating){
@@ -820,19 +883,37 @@
       `).join("")}</div>`;
     }
 
+    function commentSectionTitle(professorCards){
+      if(!Array.isArray(professorCards) || !professorCards.length){
+        return "Student Comments";
+      }
+      const top=professorCards[0]||{};
+      const name=(top.name||"").trim();
+      const school=(top.school||"").trim();
+      if(name && school){
+        return `Student Comments (for #1 ${name} at ${school})`;
+      }
+      if(name){
+        return `Student Comments (for #1 ${name})`;
+      }
+      return "Student Comments";
+    }
+
     function renderNode(node,text){
       const professorCards=
         parseMarkdownProfessorList(text)||
         parseInlineProfessorList(text)||
-        parseSingleProfessorDetails(text);
+        parseSingleProfessorDetails(text)||
+        parseFoundProfessorBulletDetails(text);
       const commentCards=parseStudentCommentsList(text);
       const textWithoutComments=stripCommentsSection(text);
       const hasCards=Boolean(professorCards||commentCards);
       node.className=hasCards?"bubble bubble--ai bubble--cards":"bubble bubble--ai";
       if(professorCards&&commentCards){
+        const title=commentSectionTitle(professorCards);
         node.innerHTML=
           cardsHtml(professorCards)+
-          `<div class="section-title">Student Comments</div>`+
+          `<div class="section-title">${renderText(title)}</div>`+
           commentCardsHtml(commentCards);
         return;
       }
@@ -842,9 +923,10 @@
       }
       if(commentCards){
         if(textWithoutComments){
+          const title=commentSectionTitle(null);
           node.innerHTML=
             `<div>${renderText(textWithoutComments)}</div>`+
-            `<div class="section-title">Student Comments</div>`+
+            `<div class="section-title">${renderText(title)}</div>`+
             commentCardsHtml(commentCards);
           return;
         }
