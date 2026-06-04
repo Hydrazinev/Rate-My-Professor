@@ -10,6 +10,7 @@ query SearchProfessors($query: TeacherSearchQuery!, $count: Int!) {
           department
           school { id legacyId name city state }
           avgRating
+          avgDifficulty
           numRatings
           wouldTakeAgainPercentRounded
         }

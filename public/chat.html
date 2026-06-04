@@ -228,7 +228,28 @@
       align-self:flex-start;
       background:var(--panel-soft);
       color:var(--ink);
+      position:relative;
     }
+
+    .copy-btn{
+      position:absolute;
+      top:8px;
+      right:8px;
+      height:26px;
+      padding:0 8px;
+      border:1px solid var(--line);
+      border-radius:8px;
+      background:var(--panel);
+      color:var(--ink-soft);
+      font:inherit;
+      font-size:.72rem;
+      font-weight:700;
+      cursor:pointer;
+      opacity:0;
+      transition:opacity .15s ease;
+    }
+    .bubble--ai:hover .copy-btn{opacity:1;}
+    .copy-btn.copied{color:var(--secondary);border-color:var(--secondary);}
 
     .bubble--cards{
       width:100%;
@@ -424,6 +445,88 @@
       color:var(--ink-soft);
     }
 
+    .rmp-link{
+      display:inline-block;
+      margin-top:8px;
+      font-size:.8rem;
+      font-weight:600;
+      color:var(--secondary);
+      text-decoration:none;
+      border:1px solid var(--secondary);
+      border-radius:6px;
+      padding:2px 8px;
+      transition:background .15s,color .15s;
+    }
+    .rmp-link:hover{background:var(--secondary);color:#eefdfc;}
+
+    .cards-wrap{display:contents}
+
+    .card-hidden{display:none}
+
+    .show-more-btn{
+      grid-column:1/-1;
+      margin-top:4px;
+      padding:8px 16px;
+      border:1px solid var(--line);
+      border-radius:10px;
+      background:var(--panel-soft);
+      color:var(--ink-soft);
+      font:inherit;
+      font-size:.85rem;
+      font-weight:600;
+      cursor:pointer;
+      transition:background .15s,color .15s;
+    }
+    .show-more-btn:hover{background:var(--chip);color:var(--ink);}
+
+    .diff-badge{
+      display:inline-block;
+      font-size:.74rem;
+      font-weight:700;
+      padding:1px 7px;
+      border-radius:6px;
+      margin-top:4px;
+    }
+    .diff-easy{background:color-mix(in oklab,#22c55e 20%,transparent);color:#15803d;}
+    .diff-medium{background:color-mix(in oklab,#f59e0b 20%,transparent);color:#92400e;}
+    .diff-hard{background:color-mix(in oklab,#ef4444 20%,transparent);color:#991b1b;}
+    html[data-theme="dark"] .diff-easy{color:#4ade80;}
+    html[data-theme="dark"] .diff-medium{color:#fbbf24;}
+    html[data-theme="dark"] .diff-hard{color:#f87171;}
+
+    .bookmark-btn{
+      background:none;
+      border:none;
+      cursor:pointer;
+      font-size:1.1rem;
+      padding:0;
+      line-height:1;
+      transition:transform .15s;
+    }
+    .bookmark-btn:hover{transform:scale(1.25);}
+
+    .saved-section{margin-top:auto;padding-top:12px;border-top:1px solid var(--line);}
+    .saved-section h4{margin:0 0 6px;font-size:.78rem;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);}
+    .saved-list{display:flex;flex-direction:column;gap:4px;max-height:140px;overflow-y:auto;}
+    .saved-item{
+      display:flex;justify-content:space-between;align-items:center;
+      padding:4px 8px;border-radius:8px;background:var(--chip);
+      font-size:.8rem;cursor:pointer;
+    }
+    .saved-item:hover{background:var(--line);}
+    .saved-item-remove{background:none;border:none;cursor:pointer;color:var(--ink-soft);font-size:.9rem;padding:0 0 0 6px;}
+    .saved-empty{font-size:.8rem;color:var(--ink-soft);font-style:italic;}
+
+    .voice-btn{
+      height:42px;width:42px;border-radius:12px;border:1px solid var(--line);
+      background:var(--panel-soft);color:var(--ink-soft);
+      font-size:1.1rem;cursor:pointer;transition:background .15s,color .15s;
+      flex-shrink:0;
+    }
+    .voice-btn:hover{background:var(--primary);color:#fff;}
+    .voice-btn.recording{background:var(--primary);color:#fff;animation:pulse 1s ease-in-out infinite;}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
+
     dialog{
       width:min(520px,92vw);
       border:1px solid var(--line);
@@ -513,7 +616,15 @@
       <div class="notes">
         Try prompts like:<br>
         Find professor "Todd Ebert" at California State University, Long Beach<br>
-        Top rated calculus professors at Stanford
+        Easiest CS professors at UCLA<br>
+        Research papers by Todd Ebert
+      </div>
+
+      <div class="saved-section">
+        <h4>⭐ Saved Professors</h4>
+        <div id="savedList" class="saved-list">
+          <span class="saved-empty">No saved professors yet</span>
+        </div>
       </div>
     </aside>
 
@@ -535,6 +646,7 @@
         </div>
         <div class="row">
           <input id="composerInput" autocomplete="off" placeholder="Ask your question..." />
+          <button id="voiceBtn" type="button" class="voice-btn" title="Voice input">🎤</button>
           <button type="submit">Send</button>
         </div>
       </form>
@@ -597,8 +709,110 @@
     const nmName=$("#nm_name"),nmSchool=$("#nm_school"),unSchool=$("#un_school"),unFilter=$("#un_filter");
     const coSubject=$("#co_subject"),coSchool=$("#co_school");
     const STREAM_START="<STREAM>",STREAM_END="<END>";
+    const NO_PROFESSOR_MARKER="NO PROFESSOR";
+    const HISTORY_KEY="rmp-chat-history";
+    const MAX_STORED_TURNS=15; // message pairs
 
-    let ws=null,streaming=false,buffer="",streamNode=null,pendingNode=null;
+    let ws=null,streaming=false,buffer="",streamNode=null,pendingNode=null,lastUserQuery="";
+
+    // ── localStorage chat history ─────────────────────────────────────────
+    function loadHistory(){
+      try{return JSON.parse(localStorage.getItem(HISTORY_KEY)||"[]");}
+      catch(e){return [];}
+    }
+    function saveToHistory(userMsg,aiMsg){
+      try{
+        const stored=loadHistory();
+        stored.push({role:"user",content:userMsg,ts:Date.now()});
+        stored.push({role:"assistant",content:aiMsg,ts:Date.now()});
+        localStorage.setItem(HISTORY_KEY,JSON.stringify(stored.slice(-MAX_STORED_TURNS*2)));
+      }catch(e){}
+    }
+
+    // ── Bookmarks ─────────────────────────────────────────────────────────────
+    const BOOKMARKS_KEY="rmp-bookmarks";
+
+    function loadBookmarks(){
+      try{return JSON.parse(localStorage.getItem(BOOKMARKS_KEY)||"[]");}
+      catch(e){return [];}
+    }
+    function saveBookmarks(bm){
+      try{localStorage.setItem(BOOKMARKS_KEY,JSON.stringify(bm));}catch(e){}
+    }
+    function isBookmarked(name,school){
+      return loadBookmarks().some(b=>b.name===name&&b.school===school);
+    }
+    function toggleBookmark(name,school,dept,btn){
+      let bm=loadBookmarks();
+      const idx=bm.findIndex(b=>b.name===name&&b.school===school);
+      if(idx>=0){
+        bm.splice(idx,1);
+        btn.textContent="☆";
+        btn.title="Save professor";
+      }else{
+        bm.push({name,school,dept,ts:Date.now()});
+        btn.textContent="⭐";
+        btn.title="Remove bookmark";
+      }
+      saveBookmarks(bm);
+      renderSavedList();
+    }
+    function renderSavedList(){
+      const list=document.getElementById("savedList");
+      if(!list) return;
+      const bm=loadBookmarks();
+      if(!bm.length){list.innerHTML='<span class="saved-empty">No saved professors yet</span>';return;}
+      list.innerHTML=bm.map(b=>`
+        <div class="saved-item" onclick="sendQuery('Find professor ${JSON.stringify(b.name).slice(1,-1)} at ${JSON.stringify(b.school).slice(1,-1)}')">
+          <span>${b.name}<br><small style="color:var(--ink-soft)">${b.school||""}</small></span>
+          <button class="saved-item-remove" title="Remove" onclick="event.stopPropagation();removeBookmark(${JSON.stringify(b.name)},${JSON.stringify(b.school)})">✕</button>
+        </div>`).join("");
+    }
+    function removeBookmark(name,school){
+      let bm=loadBookmarks().filter(b=>!(b.name===name&&b.school===school));
+      saveBookmarks(bm);
+      renderSavedList();
+    }
+
+    // ── Voice input ───────────────────────────────────────────────────────────
+    let recognition=null;
+    const voiceBtn=document.getElementById("voiceBtn");
+
+    function initVoice(){
+      const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+      if(!SpeechRecognition){
+        if(voiceBtn) voiceBtn.style.display="none";
+        return;
+      }
+      recognition=new SpeechRecognition();
+      recognition.lang="en-US";
+      recognition.interimResults=false;
+      recognition.maxAlternatives=1;
+
+      recognition.onresult=(e)=>{
+        const transcript=(e.results[0][0].transcript||"").trim();
+        if(transcript){
+          document.getElementById("composerInput").value=transcript;
+        }
+        stopVoice();
+      };
+      recognition.onerror=()=>stopVoice();
+      recognition.onend=()=>stopVoice();
+
+      if(voiceBtn) voiceBtn.addEventListener("click",()=>{
+        if(voiceBtn.classList.contains("recording")){
+          recognition.stop();
+          stopVoice();
+        }else{
+          recognition.start();
+          voiceBtn.classList.add("recording");
+          voiceBtn.title="Stop recording";
+        }
+      });
+    }
+    function stopVoice(){
+      if(voiceBtn){voiceBtn.classList.remove("recording");voiceBtn.title="Voice input";}
+    }
 
     function setTheme(theme){
       const t=theme==="dark"?"dark":"light";
@@ -619,10 +833,27 @@
       statusText.textContent=mode==="connected"?"Connected":mode==="connecting"?"Connecting":"Disconnected";
     }
 
+    function addCopyBtn(li){
+      const btn=document.createElement("button");
+      btn.className="copy-btn";
+      btn.textContent="Copy";
+      btn.addEventListener("click",()=>{
+        // Grab plain text from the bubble (strip HTML tags)
+        const plain=(li.innerText||li.textContent||"").replace(/^Copy\s*/,"").trim();
+        navigator.clipboard.writeText(plain).then(()=>{
+          btn.textContent="Copied!";
+          btn.classList.add("copied");
+          setTimeout(()=>{btn.textContent="Copy";btn.classList.remove("copied");},1800);
+        }).catch(()=>{btn.textContent="Copy";});
+      });
+      li.appendChild(btn);
+    }
+
     function addMessage(text,who="ai"){
       const li=document.createElement("li");
       li.className="bubble bubble--"+who;
       li.innerHTML=renderText(text);
+      if(who==="ai") addCopyBtn(li);
       messages.appendChild(li);
       messages.scrollTop=messages.scrollHeight;
       return li;
@@ -679,6 +910,8 @@
         const city=extractField(body,"City");
         const avgRaw=extractField(body,["Average Rating","Rating"]);
         const again=extractField(body,["Would Take Again","Take Again"]);
+        const difficulty=extractField(body,"Difficulty");
+        const profile=extractField(body,"Profile");
         if (department || school || city || avgRaw || again) {
           foundStructuredField = true;
         }
@@ -695,7 +928,9 @@
           rating,
           ratings,
           avgRaw:avgRaw||"Not available",
-          again:again||"Not available"
+          again:again||"Not available",
+          difficulty:difficulty||"",
+          profile:profile||""
         });
       }
       // Avoid rendering empty placeholder cards when source only contains names.
@@ -749,6 +984,8 @@
       const avgRaw=field(["Average Rating","Rating"]);
       const ratings=field(["Number of Ratings","Ratings"]);
       const again=field(["Would Take Again Percentage","Would Take Again","Take Again"]);
+      const difficulty=field("Difficulty");
+      const profile=field("Profile");
       const ratingMatch=avgRaw.match(/([0-9]+(?:\.[0-9]+)?)/);
 
       if(!name) return null;
@@ -762,7 +999,9 @@
         rating:ratingMatch?Number(ratingMatch[1]):null,
         ratings:ratings||"",
         avgRaw:avgRaw||"Not available",
-        again:again||"Not available"
+        again:again||"Not available",
+        difficulty:difficulty||"",
+        profile:profile||""
       }];
     }
 
@@ -789,6 +1028,8 @@
       const ratingsMatch=avgRaw.match(/(\d+)\s*ratings?/i);
       const ratingMatch=avgRaw.match(/([0-9]+(?:\.[0-9]+)?)/);
       const again=field(["Would Take Again","Would Take Again Percentage","Take Again"]);
+      const difficulty=field("Difficulty");
+      const profile=field("Profile");
 
       return [{
         rank:1,
@@ -799,7 +1040,9 @@
         rating:ratingMatch?Number(ratingMatch[1]):null,
         ratings:ratingsMatch?ratingsMatch[1]:"",
         avgRaw:avgRaw||"Not available",
-        again:again||"Not available"
+        again:again||"Not available",
+        difficulty:difficulty||"",
+        profile:profile||""
       }];
     }
 
@@ -852,25 +1095,54 @@
       return "★".repeat(rounded)+"☆".repeat(5-rounded);
     }
 
+    function diffBadge(diffStr){
+      if(!diffStr) return "";
+      const m=diffStr.match(/([0-9]+(?:\.[0-9]+)?)/);
+      if(!m) return "";
+      const val=parseFloat(m[1]);
+      const cls=val<=2.0?"diff-easy":val<=3.5?"diff-medium":"diff-hard";
+      const label=val<=2.0?"Easy":val<=3.5?"Medium":"Hard";
+      return `<span class="diff-badge ${cls}">⚡ ${val.toFixed(1)} ${label}</span>`;
+    }
+
     function cardsHtml(items){
-      const shown=items.slice(0,5);
-      return `<div class="cards">${shown.map(i=>`
-        <article class="card">
+      const LIMIT=5;
+      const extra=Math.max(0,items.length-LIMIT);
+      const cards=items.map((i,idx)=>{
+        const hidden=idx>=LIMIT?" card-hidden":"";
+        const profileLink=i.profile
+          ?`<a class="rmp-link" href="${i.profile}" target="_blank" rel="noopener noreferrer">View on RMP ↗</a>`
+          :"";
+        const savedKey=encodeURIComponent(i.name+"||"+i.school);
+        const isSaved=isBookmarked(i.name,i.school);
+        const bmBtn=`<button class="bookmark-btn" title="${isSaved?"Remove bookmark":"Save professor"}"
+          onclick="toggleBookmark(${JSON.stringify(i.name)},${JSON.stringify(i.school)},${JSON.stringify(i.department)},this)"
+          >${isSaved?"⭐":"☆"}</button>`;
+        return `<article class="card${hidden}">
           <div class="card-top">
             <div>
               <h3>${renderText(i.name)}</h3>
               <p class="card-sub">${renderText(i.department)}</p>
             </div>
-            <div class="card-rank">#${i.rank||""}</div>
+            <div style="display:flex;gap:6px;align-items:center;">
+              ${bmBtn}
+              <div class="card-rank">#${i.rank||""}</div>
+            </div>
           </div>
           <p>${renderText(i.school)} | ${renderText(i.city)}</p>
           <div class="stat-row">
             <span class="stars">${toStars(i.rating)}</span>
             <span>${Number.isFinite(i.rating)?`${i.rating.toFixed(1)}/5`:renderText(i.avgRaw)}${i.ratings?` (${renderText(i.ratings)} ratings)`:""}</span>
           </div>
+          ${i.difficulty?`<div>${diffBadge(i.difficulty)}</div>`:""}
           <p>Would take again: ${renderText(i.again)}</p>
-        </article>
-      `).join("")}</div>`;
+          ${profileLink}
+        </article>`;
+      }).join("");
+      const showMoreBtn=extra>0
+        ?`<button class="show-more-btn" onclick="this.closest('.cards').querySelectorAll('.card-hidden').forEach(c=>c.classList.remove('card-hidden'));this.remove()">Show ${extra} more ▾</button>`
+        :"";
+      return `<div class="cards">${cards}${showMoreBtn}</div>`;
     }
 
     function commentCardsHtml(items){
@@ -942,7 +1214,16 @@
       try{if(ws)ws.close();}catch(_){}
       ws=new WebSocket(wsUrl);
 
-      ws.onopen=()=>setStatus("connected");
+      ws.onopen=()=>{
+        setStatus("connected");
+        // Restore server-side chat history from localStorage so follow-up
+        // context (pronouns, index references) survives page refreshes.
+        const history=loadHistory();
+        if(history.length>0){
+          try{ws.send(JSON.stringify({type:"restore_history",messages:history}));}
+          catch(e){}
+        }
+      };
       ws.onerror=()=>setStatus("disconnected");
       ws.onclose=()=>{setStatus("disconnected");setTimeout(connect,2000);};
 
@@ -959,15 +1240,34 @@
         }
 
         if(t===STREAM_END){
-          if(streamNode)renderNode(streamNode,buffer);
+          // Final render: full card/comment parsing on complete buffer
+          // Strip the internal marker before showing to the user
+          const finalText=buffer.replace(new RegExp(NO_PROFESSOR_MARKER,"g"),"").trim();
+          if(streamNode){
+            renderNode(streamNode,finalText);
+            addCopyBtn(streamNode);
+          }
+          // Persist this exchange so context survives reconnects/refreshes
+          if(lastUserQuery&&finalText){
+            saveToHistory(lastUserQuery,finalText);
+          }
           streaming=false;
           buffer="";
           streamNode=null;
+          lastUserQuery="";
           return;
         }
 
         if(streaming){
           buffer+=raw;
+          // Progressive live update: show plain text as tokens arrive,
+          // the full renderNode() card pass runs at STREAM_END.
+          if(streamNode){
+            const liveText=buffer.replace(new RegExp(NO_PROFESSOR_MARKER,"g"),"");
+            streamNode.className="bubble bubble--ai";
+            streamNode.innerHTML=renderText(liveText);
+            messages.scrollTop=messages.scrollHeight;
+          }
           return;
         }
 
@@ -984,6 +1284,7 @@
     function sendQuery(text){
       const q=String(text||"").trim();
       if(!q)return;
+      lastUserQuery=q;
       addMessage(q,"user");
       pendingNode=addLoader();
 
@@ -1057,6 +1358,8 @@
     });
 
     initTheme();
+    initVoice();
+    renderSavedList();
     connect();
   </script>
 </body>

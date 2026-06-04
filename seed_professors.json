@@ -1,0 +1,92 @@
+[
+  {
+    "professor_name": "Dr. Jane Smith",
+    "course": "Intro to Biology",
+    "overall_rating": 4.5,
+    "clarity": 4.7,
+    "helpfulness": 4.6,
+    "easiness": 3.8,
+    "comment": "Very knowledgeable and explains concepts clearly."
+  },
+  {
+    "professor_name": "Dr. John Doe",
+    "course": "Calculus I",
+    "overall_rating": 3.8,
+    "clarity": 3.5,
+    "helpfulness": 4.0,
+    "easiness": 3.0,
+    "comment": "Challenging but fair. Attend lectures to do well."
+  },
+  {
+    "professor_name": "Prof. Emma Lee",
+    "course": "English Lit",
+    "overall_rating": 4.9,
+    "clarity": 5.0,
+    "helpfulness": 4.9,
+    "easiness": 4.2,
+    "comment": "Engaging lectures, makes reading enjoyable."
+  },
+  {
+    "professor_name": "Dr. Mark Brown",
+    "course": "Physics II",
+    "overall_rating": 3.2,
+    "clarity": 3.0,
+    "helpfulness": 3.5,
+    "easiness": 2.9,
+    "comment": "Material is tough, but he's approachable."
+  },
+  {
+    "professor_name": "Prof. Amy Nguyen",
+    "course": "Art History",
+    "overall_rating": 4.8,
+    "clarity": 4.9,
+    "helpfulness": 4.8,
+    "easiness": 4.4,
+    "comment": "Enthusiastic, makes art accessible."
+  },
+  {
+    "professor_name": "Dr. Lisa White",
+    "course": "Organic Chem",
+    "overall_rating": 2.9,
+    "clarity": 2.7,
+    "helpfulness": 3.1,
+    "easiness": 2.5,
+    "comment": "Very hard course, lots of memorization."
+  },
+  {
+    "professor_name": "Prof. Alex Kim",
+    "course": "Political Sci",
+    "overall_rating": 4.4,
+    "clarity": 4.3,
+    "helpfulness": 4.5,
+    "easiness": 3.7,
+    "comment": "Interesting lectures, encourages debate."
+  },
+  {
+    "professor_name": "Dr. Robert Green",
+    "course": "Microeconomics",
+    "overall_rating": 4.0,
+    "clarity": 3.8,
+    "helpfulness": 4.2,
+    "easiness": 3.6,
+    "comment": "Fair grader, but exams are difficult."
+  },
+  {
+    "professor_name": "Prof. Eva Black",
+    "course": "Psychology 101",
+    "overall_rating": 4.6,
+    "clarity": 4.7,
+    "helpfulness": 4.5,
+    "easiness": 4.0,
+    "comment": "Passionate about subject, very helpful."
+  },
+  {
+    "professor_name": "Dr. David Lee",
+    "course": "Environmental Sci",
+    "overall_rating": 3.7,
+    "clarity": 3.6,
+    "helpfulness": 3.8,
+    "easiness": 3.4,
+    "comment": "Lectures can be dry, but he's knowledgeable."
+  }
+]

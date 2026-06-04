@@ -115,8 +115,8 @@ class VectorStoreProtocol(Protocol):
 
 class RAGConfig(BaseModel):
     """Runtime config for RAG behavior."""
-    default_top_k: int = Field(default=3, ge=1, le=20)
-    similarity_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    default_top_k: int = Field(default=4, ge=1, le=20)
+    similarity_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     enable_metadata_filtering: bool = Field(default=True)
 
     class Config:
