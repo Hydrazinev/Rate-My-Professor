@@ -517,16 +517,6 @@
     .saved-item-remove{background:none;border:none;cursor:pointer;color:var(--ink-soft);font-size:.9rem;padding:0 0 0 6px;}
     .saved-empty{font-size:.8rem;color:var(--ink-soft);font-style:italic;}
 
-    .voice-btn{
-      height:42px;width:42px;border-radius:12px;border:1px solid var(--line);
-      background:var(--panel-soft);color:var(--ink-soft);
-      font-size:1.1rem;cursor:pointer;transition:background .15s,color .15s;
-      flex-shrink:0;
-    }
-    .voice-btn:hover{background:var(--primary);color:#fff;}
-    .voice-btn.recording{background:var(--primary);color:#fff;animation:pulse 1s ease-in-out infinite;}
-    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
-
     dialog{
       width:min(520px,92vw);
       border:1px solid var(--line);
@@ -646,7 +636,6 @@
         </div>
         <div class="row">
           <input id="composerInput" autocomplete="off" placeholder="Ask your question..." />
-          <button id="voiceBtn" type="button" class="voice-btn" title="Voice input">🎤</button>
           <button type="submit">Send</button>
         </div>
       </form>
@@ -772,46 +761,6 @@
       let bm=loadBookmarks().filter(b=>!(b.name===name&&b.school===school));
       saveBookmarks(bm);
       renderSavedList();
-    }
-
-    // ── Voice input ───────────────────────────────────────────────────────────
-    let recognition=null;
-    const voiceBtn=document.getElementById("voiceBtn");
-
-    function initVoice(){
-      const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
-      if(!SpeechRecognition){
-        if(voiceBtn) voiceBtn.style.display="none";
-        return;
-      }
-      recognition=new SpeechRecognition();
-      recognition.lang="en-US";
-      recognition.interimResults=false;
-      recognition.maxAlternatives=1;
-
-      recognition.onresult=(e)=>{
-        const transcript=(e.results[0][0].transcript||"").trim();
-        if(transcript){
-          document.getElementById("composerInput").value=transcript;
-        }
-        stopVoice();
-      };
-      recognition.onerror=()=>stopVoice();
-      recognition.onend=()=>stopVoice();
-
-      if(voiceBtn) voiceBtn.addEventListener("click",()=>{
-        if(voiceBtn.classList.contains("recording")){
-          recognition.stop();
-          stopVoice();
-        }else{
-          recognition.start();
-          voiceBtn.classList.add("recording");
-          voiceBtn.title="Stop recording";
-        }
-      });
-    }
-    function stopVoice(){
-      if(voiceBtn){voiceBtn.classList.remove("recording");voiceBtn.title="Voice input";}
     }
 
     function setTheme(theme){
@@ -1358,7 +1307,6 @@
     });
 
     initTheme();
-    initVoice();
     renderSavedList();
     connect();
   </script>
